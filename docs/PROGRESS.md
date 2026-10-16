@@ -35,4 +35,18 @@ Completed observations:
 | Failure semantics | `:Meta {ready: false}` set during load; updated to `ready: true` only after count validation passes. Interrupted load verified to leave `is_graph_ready == False`. |
 | Behavior tests | `pytest -q tests/test_module_1.py` passed (4/4). Cumulative test suite passed (6/6). |
 
+## Module 2 — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| Official MCP client | `agents/mcp_client.py` connects to `@falkordb/mcpserver` via stdio; enforces read-only mode, measures duration_ms, redacts credentials from traces. |
+| Typed graph tools | `agents/tools.py` implements `blast_radius`, `failover_routes`, `choke_points`, `who_owns`, `bus_factor`, `decision_provenance` returning typed `ToolResult`. |
+| Blast radius | `blast_radius("payments-primary")` returned exact affected services `["checkout", "gateway", "orders", "worker"]` (count=4), with witness chains and depth frontier check (depth 6 unhit). Unknown service returns `NOT_FOUND`. |
+| Failover routes | `failover_routes("checkout", "payments-backup", max_cost=12)` rejected 20-cost premium route and selected 8-cost queue route (latency 5ms). Below budget (cap 5) returned `NO_SAFE_ROUTE` with all candidates rejected. |
+| Choke points | `choke_points()` executed sampled betweenness centrality (`algo.betweenness`, seed=42) and returned top dependency connectors. |
+| Safety boundaries | Injection syntax rejected by Pydantic before queries; write query via reader client rejected; tenant `acme` cannot access `agent_memory_globex` (NOPERM); unready knowledge tools return `NOT_READY`. |
+| Behavior tests | `pytest -q tests/test_module_2.py` passed (9/9). Cumulative test suite passed (15/15). |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).
