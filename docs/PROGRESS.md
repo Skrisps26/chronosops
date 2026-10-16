@@ -76,4 +76,17 @@ Completed observations:
 | Monitoring & alerting | `integrations/monitoring.py` evaluates Prometheus blackbox health and classifies stale probes (>15s) and absent targets as `monitoring_unknown`. `api/main.py` provides bearer-token authenticated `/internal/alerts` Alertmanager webhook with idempotent incident recording. |
 | Behavior tests | `pytest -q tests/test_module_3a.py` passed (5/5). Cumulative test suite passed (27/27). |
 
+## Module 3B — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| Slack manifest | `slack/manifest.yaml` requests exact least-privilege bot scopes (`channels:history`, `chat:write`) and Socket Mode (`connections:write`); omits `chat:write.public` and `channels:join`. |
+| Preflight validator | `scripts/slack_preflight.py` validates `xoxb-`, `xapp-`, and `C-` channel ID formats, tests `auth.test`, and verifies channel membership and history reading. |
+| Connector & safety | `integrations/slack.py` enforces channel allowlisting, prevents bot loops (`bot_id`, `subtype=bot_message`, self-user), and normalizes collision-free document IDs (`slack:<team>:<channel>:<ts>`). |
+| Inbox idempotency | `is_event_processed` and `record_processed_event` ensure duplicate Slack `event_id` deliveries do not duplicate knowledge graph facts. |
+| Incident dispatch | `post_incident_root` dispatches warning notice with console link; `post_incident_outcome` posts threaded verification reply. |
+| Behavior tests | `pytest -q tests/test_module_3b.py` passed (6/6). Cumulative test suite passed (33/33). |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).
