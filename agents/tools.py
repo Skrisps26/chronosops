@@ -218,27 +218,17 @@ async def choke_points(tenant: str = "acme") -> ToolResult:
 
 async def who_owns(service_id: str, tenant: str = "acme") -> ToolResult:
     """Return ownership context for a service (Module 3 Company Brain integration)."""
-    # Not ready until Module 3 seeds company_brain
-    return ToolResult(
-        status="NOT_READY",
-        data="Company Brain graph is not yet seeded. Available in Module 3.",
-        trace=ToolTrace(tool="who_owns", graph=BRAIN_GRAPH, cypher="", params={"service_id": service_id}),
-    )
+    from agents.knowledge import who_owns as kb_who_owns
+    return await kb_who_owns(service_id=service_id, tenant=tenant)
 
 
 async def bus_factor(service_id: str, tenant: str = "acme") -> ToolResult:
     """Compute knowledge concentration proxy (Module 3 Company Brain integration)."""
-    return ToolResult(
-        status="NOT_READY",
-        data="Company Brain graph is not yet seeded. Available in Module 3.",
-        trace=ToolTrace(tool="bus_factor", graph=BRAIN_GRAPH, cypher="", params={"service_id": service_id}),
-    )
+    from agents.knowledge import bus_factor as kb_bus_factor
+    return await kb_bus_factor(service_id=service_id, tenant=tenant)
 
 
 async def decision_provenance(service_id: str, tenant: str = "acme") -> ToolResult:
     """Return cited architectural decision trail (Module 3 Company Brain integration)."""
-    return ToolResult(
-        status="NOT_READY",
-        data="Company Brain graph is not yet seeded. Available in Module 3.",
-        trace=ToolTrace(tool="decision_provenance", graph=BRAIN_GRAPH, cypher="", params={"service_id": service_id}),
-    )
+    from agents.knowledge import decision_provenance as kb_decision_provenance
+    return await kb_decision_provenance(service_id=service_id, tenant=tenant)

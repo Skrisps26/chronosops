@@ -71,10 +71,11 @@ async def test_choke_points_betweenness_ranking():
 @pytest.mark.asyncio
 async def test_unready_knowledge_tool_returns_not_ready():
     """Verify that unseeded company brain tools return NOT_READY rather than hallucinated facts."""
-    result = await who_owns("payments-primary")
-    assert result.status == "NOT_READY"
-    assert "not yet seeded" in result.data.lower()
-
+    from unittest.mock import patch
+    with patch("agents.knowledge.check_brain_ready", return_value=False):
+        result = await who_owns("payments-primary")
+        assert result.status == "NOT_READY"
+        assert "not yet seeded" in result.data.lower()
 
 @pytest.mark.asyncio
 async def test_injection_syntax_rejected_at_validation():

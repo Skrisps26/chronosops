@@ -49,4 +49,18 @@ Completed observations:
 | Safety boundaries | Injection syntax rejected by Pydantic before queries; write query via reader client rejected; tenant `acme` cannot access `agent_memory_globex` (NOPERM); unready knowledge tools return `NOT_READY`. |
 | Behavior tests | `pytest -q tests/test_module_2.py` passed (9/9). Cumulative test suite passed (15/15). |
 
+## Module 3 — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| Company Brain ontology | `seed/ontology.py` defines 7 entities (Service, Person, Team, Decision, Ticket, PullRequest, SlackThread), 5 typed relations, and 3 structured table mappings. |
+| Knowledge ingestion | `seed/ingest.py` ingests all 16 markdown documents and structured CSV tables into FalkorDB `company_brain`. Verified 16 documents and 16 chunks with Bedrock `LLMExtractor`. |
+| Canonical alias resolution | `resolve_service_id` correctly resolves multiple aliases (`"Payments API"`, `"pay-api"`) and exact names to canonical `"payments-primary"`. |
+| Ownership & bus factor | `who_owns("payments-primary")` returned team Payments and lead members including Alice Chen. `bus_factor("payments-primary")` computed exact proxy 1 and flagged `bus_factor_warning: True` with Alice Chen as sole primary contributor. |
+| Decision provenance | `decision_provenance("payments-primary")` traced decisions to cited RFCs and Slack threads, returning exact chunk IDs and excerpts via GraphRAG `MENTIONED_IN` provenance. |
+| Single-file update | `update_company_document("rfc-001-payments-failover", ...)` replaced chunk text with updated rationale ("rollback speed") and preserved unrelated entities (`checkout` and Carol Danvers). Original fixture restored after test. |
+| Behavior tests | `pytest -q tests/test_module_3.py` passed (7/7). Cumulative test suite passed (22/22). |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).
