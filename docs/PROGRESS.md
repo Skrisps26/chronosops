@@ -116,4 +116,17 @@ Completed observations:
 | Concurrency proof | 20 concurrent cross-tenant consolidations completed without errors or leaks; p50 latency = 5.31ms, p95 = 7.15ms recorded in `artifacts/concurrency-module-5.json`. |
 | Behavior tests | `pytest -q tests/test_module_5.py` passed (5/5). Cumulative test suite passed (44/44). |
 
+## Module 6 — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| API contracts | `api/contracts.py` defines typed Pydantic models, tenant extraction headers (`X-Tenant-ID`), origin header validator, and real-time WebSocket connection manager. |
+| REST endpoints | `api/main.py` provides `/healthz`, `/readyz`, `/api/monitoring`, `/api/topology`, `/api/questions`, `/api/incidents`, `/api/sources/{id}`, and `/internal/alerts`. |
+| WebSocket streaming | `/api/runs/{id}/events` streams typed `EventEnvelope` events (`run_started`, `proposal_ready`, etc.) to subscribed frontend clients. |
+| Operator UI | Built with React, TypeScript, and Cytoscape.js into `ui/dist`; provides 3-column operator console, interactive topology highlighting, cited sources viewer, pending approval box, and collapsible trace drawer. |
+| Reverse proxy | `proxy/nginx.conf` and `proxy/Dockerfile` map basic auth for `acme` and `globex`, block external `/internal/` access, and proxy WebSockets. |
+| Behavior tests | `pytest -q tests/test_module_6.py` passed (9/9). Cumulative test suite passed (53/53). |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).
