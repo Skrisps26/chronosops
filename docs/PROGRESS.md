@@ -63,4 +63,17 @@ Completed observations:
 | Single-file update | `update_company_document("rfc-001-payments-failover", ...)` replaced chunk text with updated rationale ("rollback speed") and preserved unrelated entities (`checkout` and Carol Danvers). Original fixture restored after test. |
 | Behavior tests | `pytest -q tests/test_module_3.py` passed (7/7). Cumulative test suite passed (22/22). |
 
+## Module 3A — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| CloudFormation template | `infra/demo.yaml` defines disposable `t4g.micro` workload in dedicated VPC with required IMDSv2, encrypted gp3 EBS, least-privilege SG (/32 ingress only, no 0.0.0.0/0), and `aws-cloudformation@3` context metadata. |
+| Fixed SSM documents | `${StackName}-StopNginx` implements 10-minute systemd watchdog timer before stopping nginx; `${StackName}-StartNginx` implements parameterless start and watchdog cancellation. |
+| Preflight cost calculator | `scripts/demo_stack.py preflight` auto-discovers external `/32` IP and computes deterministic 6-hour rehearsal estimate ($0.081 total). |
+| AWS recovery client | `integrations/aws_actions.py` configures single-attempt mutation (`total_max_attempts=1`) to prevent duplicate commands; polls `GetCommandInvocation` with exponential backoff. |
+| Monitoring & alerting | `integrations/monitoring.py` evaluates Prometheus blackbox health and classifies stale probes (>15s) and absent targets as `monitoring_unknown`. `api/main.py` provides bearer-token authenticated `/internal/alerts` Alertmanager webhook with idempotent incident recording. |
+| Behavior tests | `pytest -q tests/test_module_3a.py` passed (5/5). Cumulative test suite passed (27/27). |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).

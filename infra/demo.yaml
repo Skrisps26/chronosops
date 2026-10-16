@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ChronosOps disposable demo EC2 workload with SSM management (aws-cloudformation@3)'
+
+Metadata:
+  AWSToolsMetrics.AWSAgentToolkit: 'aws-cloudformation@3'
+  com.aws.cloudformation.Context:
+    why: 'Dedicated disposable workload for real service failure and recovery demonstration.'
+    must: 'No FalkorDB, no database, no secrets, no 0.0.0.0/0 ingress, encrypted gp3 volume, IMDSv2 required.'
+
+Parameters:
+  OperatorIp:
+    Type: String
+    Description: 'Public IPv4 address of the monitoring host in CIDR notation (e.g. 1.2.3.4/32)'
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/32$'
+    ConstraintDescription: 'Must be an exact IPv4 /32 CIDR address.'
+  InstanceType:
+    Type: String
+    Default: 't4g.micro'
+    AllowedValues: ['t4g.nano', 't4g.micro']
+    Description: 'Arm64 burstable Graviton instance type'
+  AmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64'
+    Description: 'SSM public parameter resolving current AL2023 ARM64 AMI'
+
+Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.1.0/24'
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+
+  RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+
+  DefaultRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref RouteTable
+
+  SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Allow inbound HTTP from monitoring host only'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref OperatorIp
+          Description: 'HTTP health checks from monitoring host /32'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Outbound HTTPS for SSM Agent and package repository'
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+
+  InstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'ec2.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+
+  InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  DemoInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: '/dev/xvda'
+          Ebs:
+            VolumeSize: 8
+            VolumeType: 'gp3'
+            Encrypted: true
+            DeleteOnTermination: true
+      MetadataOptions:
+        HttpTokens: 'required'
+        HttpPutResponseHopLimit: 1
+        HttpEndpoint: 'enabled'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          dnf install -y nginx
+          mkdir -p /usr/share/nginx/html
+          echo 'chronosops-payments-primary-ok' > /usr/share/nginx/html/healthz
+          echo '<h1>ChronosOps Demo Service: Payments Primary</h1>' > /usr/share/nginx/html/index.html
+          systemctl enable nginx
+          systemctl start nginx
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+        - Key: 'Service'
+          Value: 'payments-primary'
+
+  StopNginxDocument:
+    Type: 'AWS::SSM::Document'
+    Properties:
+      Name: !Sub "${AWS::StackName}-StopNginx"
+      DocumentType: 'Command'
+      DocumentFormat: 'YAML'
+      Content:
+        schemaVersion: '2.2'
+        description: 'Operator-only: stop demo nginx service with 10-minute safety watchdog'
+        mainSteps:
+          - action: 'aws:runShellScript'
+            name: 'stopNginxWithWatchdog'
+            inputs:
+              runCommand:
+                - '/usr/bin/systemd-run --on-active=10m --unit=chronosops-watchdog /usr/bin/systemctl start nginx.service'
+                - '/usr/bin/systemctl stop nginx.service'
+
+  StartNginxDocument:
+    Type: 'AWS::SSM::Document'
+    Properties:
+      Name: !Sub "${AWS::StackName}-StartNginx"
+      DocumentType: 'Command'
+      DocumentFormat: 'YAML'
+      Content:
+        schemaVersion: '2.2'
+        description: 'Parameterless restart document for ChronosOps approved recovery'
+        mainSteps:
+          - action: 'aws:runShellScript'
+            name: 'startNginx'
+            inputs:
+              runCommand:
+                - '/usr/bin/systemctl stop chronosops-watchdog.timer || true'
+                - '/usr/bin/systemctl start nginx.service'
+                - '/usr/bin/systemctl is-active nginx.service'
+
+Outputs:
+  InstanceId:
+    Description: 'EC2 Instance ID of the demo service'
+    Value: !Ref DemoInstance
+  PublicIp:
+    Description: 'Public IPv4 address of the demo service'
+    Value: !GetAtt DemoInstance.PublicIp
+  StartDocumentName:
+    Description: 'SSM recovery document name'
+    Value: !Ref StartNginxDocument
+  StopDocumentName:
+    Description: 'SSM fault injection document name'
+    Value: !Ref StopNginxDocument
+  SecurityGroupId:
+    Description: 'Demo security group ID'
+    Value: !Ref SecurityGroup

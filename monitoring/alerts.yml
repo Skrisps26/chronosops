@@ -1,0 +1,12 @@
+groups:
+  - name: chronosops_demo_alerts
+    rules:
+      - alert: ChronosOpsDemoHttpDown
+        expr: probe_success == 0
+        for: 15s
+        labels:
+          severity: critical
+          service: payments-primary
+        annotations:
+          summary: "Payments primary service HTTP probe failed"
+          description: "Blackbox probe on {{ $labels.instance }} returned success=0 for 15s"
