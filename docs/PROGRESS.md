@@ -102,4 +102,18 @@ Completed observations:
 | Cross-tenant & expiry safety | Unauthorized tenant (`globex`) attempting to approve `acme` incident raises `ActionNotFoundError` (no leak). Expired proposal (>5m) raises `ActionConflictError`. |
 | Behavior tests | `pytest -q tests/test_module_4.py` passed (6/6). Cumulative test suite passed (39/39). |
 
+## Module 5 — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| Episodic & semantic memory | `agents/memory.py` consolidates completed incidents into isolated `agent_memory_{tenant}` graph with `IncidentEpisode`, `DecisionLog`, `ServiceRef`, and `SemanticFact` (blocked route exclusions). |
+| Fresh session recall | `retrieve_tenant_memory` recalls historical episodes and active blocked routes in a fresh session with zero prior conversation history. |
+| Tenant isolation | Globex cannot observe Acme episodes (`test_tenant_isolation_boundary`). Restricted Globex reader connection to `agent_memory_acme` raises `NOPERM`. |
+| Procedural workflow | Consolidating 3 successful incidents creates a `WorkflowSubgraph` with sequential `WorkflowStep` nodes connected by `NEXT_STEP` edges. |
+| Zero-LLM execution | `execute_learned_procedural_workflow` runs deterministic playbook without LLM calls (`llm_calls_made == 0`), while strictly enforcing current safety checks and human approval. |
+| Concurrency proof | 20 concurrent cross-tenant consolidations completed without errors or leaks; p50 latency = 5.31ms, p95 = 7.15ms recorded in `artifacts/concurrency-module-5.json`. |
+| Behavior tests | `pytest -q tests/test_module_5.py` passed (5/5). Cumulative test suite passed (44/44). |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).
