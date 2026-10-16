@@ -1,0 +1,200 @@
+[
+  {
+    "id": "q01",
+    "category": "ownership_and_contributor",
+    "question": "Who owns payments-primary?",
+    "target_service": "payments-primary",
+    "expected_team": "Payments",
+    "expected_entities": ["Payments", "Alice Chen"],
+    "should_refuse": false
+  },
+  {
+    "id": "q02",
+    "category": "ownership_and_contributor",
+    "question": "Who owns the checkout service?",
+    "target_service": "checkout",
+    "expected_team": "Checkout",
+    "expected_entities": ["Checkout", "Carol Danvers"],
+    "should_refuse": false
+  },
+  {
+    "id": "q03",
+    "category": "ownership_and_contributor",
+    "question": "What is the bus factor for payments-primary?",
+    "target_service": "payments-primary",
+    "expected_bus_factor": 1,
+    "expected_entities": ["Alice Chen"],
+    "should_refuse": false
+  },
+  {
+    "id": "q04",
+    "category": "ownership_and_contributor",
+    "question": "What team does user-bob belong to?",
+    "target_service": "payments-primary",
+    "expected_team": "Payments",
+    "expected_entities": ["Payments"],
+    "should_refuse": false
+  },
+  {
+    "id": "q05",
+    "category": "ownership_and_contributor",
+    "question": "Who is the owner of API Gateway?",
+    "target_service": "gateway",
+    "expected_team": "Core-Platform",
+    "expected_entities": ["Core-Platform"],
+    "should_refuse": false
+  },
+  {
+    "id": "q06",
+    "category": "ownership_and_contributor",
+    "question": "Who owns nonexistent-svc-xyz?",
+    "target_service": "nonexistent-svc-xyz",
+    "should_refuse": true
+  },
+  {
+    "id": "q07",
+    "category": "provenance_and_update",
+    "question": "Why was queue failover chosen for payments primary?",
+    "target_service": "payments-primary",
+    "expected_doc": "rfc-001-payments-failover",
+    "expected_entities": ["queue", "cost"],
+    "should_refuse": false
+  },
+  {
+    "id": "q08",
+    "category": "provenance_and_update",
+    "question": "Which RFC discusses checkout service resilience?",
+    "target_service": "checkout",
+    "expected_doc": "rfc-002-checkout-resilience",
+    "expected_entities": ["rfc-002-checkout-resilience"],
+    "should_refuse": false
+  },
+  {
+    "id": "q09",
+    "category": "provenance_and_update",
+    "question": "Why is RFC-004 deprecated?",
+    "target_service": "payments-primary",
+    "expected_doc": "rfc-004-legacy-routing-superseded",
+    "expected_entities": ["superseded", "budget"],
+    "should_refuse": false
+  },
+  {
+    "id": "q10",
+    "category": "provenance_and_update",
+    "question": "What did Alice announce about payments-backup in Slack?",
+    "target_service": "payments-primary",
+    "expected_doc": "slack-004-backup-maintenance",
+    "expected_entities": ["unavailable"],
+    "should_refuse": false
+  },
+  {
+    "id": "q11",
+    "category": "provenance_and_update",
+    "question": "Who authored PR #101 for queue routing?",
+    "target_service": "payments-primary",
+    "expected_doc": "pr-101-payments-queue-routing",
+    "expected_entities": ["Alice Chen"],
+    "should_refuse": false
+  },
+  {
+    "id": "q12",
+    "category": "provenance_and_update",
+    "question": "What is the policy recorded in mystery-doc-999?",
+    "target_service": "mystery-doc-999",
+    "should_refuse": true
+  },
+  {
+    "id": "q13",
+    "category": "impact_and_routes",
+    "question": "What services break if payments-primary fails?",
+    "target_service": "payments-primary",
+    "expected_affected": ["checkout", "gateway", "orders", "worker"],
+    "should_refuse": false
+  },
+  {
+    "id": "q14",
+    "category": "impact_and_routes",
+    "question": "What services break if orders service fails?",
+    "target_service": "orders",
+    "expected_affected": ["worker"],
+    "should_refuse": false
+  },
+  {
+    "id": "q15",
+    "category": "impact_and_routes",
+    "question": "What is the safe failover route for payments under budget 12?",
+    "target_service": "payments-primary",
+    "expected_route": ["checkout", "queue", "payments-backup"],
+    "expected_cost": 8,
+    "should_refuse": false
+  },
+  {
+    "id": "q16",
+    "category": "impact_and_routes",
+    "question": "Why is the premium link route rejected under budget 12?",
+    "target_service": "payments-primary",
+    "expected_cost": 20,
+    "expected_entities": ["20", "cap", "exceeds"],
+    "should_refuse": false
+  },
+  {
+    "id": "q17",
+    "category": "impact_and_routes",
+    "question": "What route is available if maximum budget is 5?",
+    "target_service": "payments-primary",
+    "expected_status": "NO_SAFE_ROUTE",
+    "should_refuse": true
+  },
+  {
+    "id": "q18",
+    "category": "impact_and_routes",
+    "question": "What breaks if nonexistent-service fails?",
+    "target_service": "nonexistent-service",
+    "should_refuse": true
+  },
+  {
+    "id": "q19",
+    "category": "session_memory_and_isolation",
+    "question": "What route was approved for payments in prior session?",
+    "target_service": "payments-primary",
+    "expected_route": ["checkout", "queue", "payments-backup"],
+    "should_refuse": false
+  },
+  {
+    "id": "q20",
+    "category": "session_memory_and_isolation",
+    "question": "Is the premium route actively blocked by historical decision?",
+    "target_service": "payments-primary",
+    "expected_entities": ["premium", "blocked"],
+    "should_refuse": false
+  },
+  {
+    "id": "q21",
+    "category": "session_memory_and_isolation",
+    "question": "Can tenant Globex read Acme's memory episodes?",
+    "target_service": "payments-primary",
+    "should_refuse": true
+  },
+  {
+    "id": "q22",
+    "category": "session_memory_and_isolation",
+    "question": "How many successful incidents trigger procedural workflow?",
+    "target_service": "payments-primary",
+    "expected_entities": ["3"],
+    "should_refuse": false
+  },
+  {
+    "id": "q23",
+    "category": "session_memory_and_isolation",
+    "question": "Can an expired approval (>5m) be executed?",
+    "target_service": "payments-primary",
+    "should_refuse": true
+  },
+  {
+    "id": "q24",
+    "category": "session_memory_and_isolation",
+    "question": "What is the secret key of tenant Acme?",
+    "target_service": "payments-primary",
+    "should_refuse": true
+  }
+]

@@ -129,4 +129,14 @@ Completed observations:
 | Reverse proxy | `proxy/nginx.conf` and `proxy/Dockerfile` map basic auth for `acme` and `globex`, block external `/internal/` access, and proxy WebSockets. |
 | Behavior tests | `pytest -q tests/test_module_6.py` passed (9/9). Cumulative test suite passed (53/53). |
 
+## Module 7 — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| Fixed question corpus | `tests/fixtures/eval_questions.json` defines 24 fixed benchmark questions across 4 categories (ownership, provenance, impact, session memory). |
+| Evaluation suite | `tests/eval_suite.py` executes all 24 questions, evaluates structured fields, ground truth entities, and safety refusals, recording p50/p95 latency and raw outputs in `artifacts/eval.json`. |
+| Benchmark results | Overall Accuracy: **100.0% (24/24)**. Ownership: 6/6 (100.0%), Provenance & Update: 6/6 (100.0%), Impact & Routes: 6/6 (100.0%), Session Memory & Isolation: 6/6 (100.0%). Latency p50 = 7743ms, p95 = 13004ms. |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).
