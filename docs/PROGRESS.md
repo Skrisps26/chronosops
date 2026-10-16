@@ -89,4 +89,17 @@ Completed observations:
 | Incident dispatch | `post_incident_root` dispatches warning notice with console link; `post_incident_outcome` posts threaded verification reply. |
 | Behavior tests | `pytest -q tests/test_module_3b.py` passed (6/6). Cumulative test suite passed (33/33). |
 
+## Module 4 — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| LangGraph workflow | `agents/workflow.py` defines linear lifecycle StateGraph (`triage` -> `remediation` -> `governance`) with typed `IncidentState`. |
+| Triage & remediation | `agents/triage.py` evaluates blast radius and ownership. `agents/remediation.py` plans safe alternative for simulation (queue route) and cites operational policy for real mode (`restart_service`). |
+| Governance & approvals | `agents/governance.py` enforces policy rules, calculates evidence hashes, and generates server-side `ApprovalRecord` with 5-minute expiry in `ops_topology`. |
+| Execution handlers | `agents/actions.py` implements `approve_action` and `reject_action`. Simulation merges `:TrafficState` and records `applied`. Re-approval returns `already_completed: True` (idempotent). |
+| Cross-tenant & expiry safety | Unauthorized tenant (`globex`) attempting to approve `acme` incident raises `ActionNotFoundError` (no leak). Expired proposal (>5m) raises `ActionConflictError`. |
+| Behavior tests | `pytest -q tests/test_module_4.py` passed (6/6). Cumulative test suite passed (39/39). |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).
