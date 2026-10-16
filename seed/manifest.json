@@ -1,0 +1,1140 @@
+{
+  "scenario": {
+    "root_service": "payments-primary",
+    "affected_services": [
+      "checkout",
+      "gateway",
+      "orders",
+      "worker"
+    ],
+    "routes": {
+      "fastest_rejected": {
+        "path": [
+          "checkout",
+          "premium",
+          "payments-backup"
+        ],
+        "latency_ms": 2,
+        "cost": 20,
+        "max_cost_cap": 12,
+        "rejected": true
+      },
+      "safe_alternative": {
+        "path": [
+          "checkout",
+          "queue",
+          "payments-backup"
+        ],
+        "latency_ms": 5,
+        "cost": 8,
+        "max_cost_cap": 12,
+        "rejected": false
+      }
+    },
+    "ownership": {
+      "service_id": "payments-primary",
+      "team": "Payments",
+      "primary_contributor": "user-alice",
+      "bus_factor_proxy": 1
+    }
+  },
+  "counts": {
+    "services": 45,
+    "dependencies": 102,
+    "routes": 5,
+    "people": 12,
+    "teams": 4,
+    "aliases": 4,
+    "documents": 16
+  },
+  "services": [
+    {
+      "service_id": "gateway",
+      "name": "API Gateway",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-0",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "checkout",
+      "name": "Checkout Service",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-1",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "orders",
+      "name": "Orders Ingestion",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-1",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "worker",
+      "name": "Order Processing Worker",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "payments-primary",
+      "name": "Payments Primary API",
+      "owner_team": "Payments",
+      "environment": "production",
+      "health": "degraded",
+      "tier": "tier-0",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "payments-backup",
+      "name": "Payments Standby Gateway",
+      "owner_team": "Payments",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-1",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "premium",
+      "name": "High-Priority Transit Link",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "queue",
+      "name": "Buffered Failover Queue",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-01",
+      "name": "Service Whiteboard One-To-One Web-Readiness",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-02",
+      "name": "Service Extend Efficient Action-Items",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-03",
+      "name": "Service Enhance Global Platforms",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-04",
+      "name": "Service Innovate E-Business Applications",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-05",
+      "name": "Service Brand Robust Web-Readiness",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-06",
+      "name": "Service Evolve Killer E-Services",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-07",
+      "name": "Service Deliver Proactive Schemas",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-08",
+      "name": "Service Aggregate Next-Generation E-Services",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-09",
+      "name": "Service Grow Efficient Synergies",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-10",
+      "name": "Service Engineer Granular E-Commerce",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-11",
+      "name": "Service Facilitate Efficient Eyeballs",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-12",
+      "name": "Service Architect Cross-Platform Platforms",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-13",
+      "name": "Service Evolve Enterprise Platforms",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-14",
+      "name": "Service Seize Cross-Media Metrics",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-15",
+      "name": "Service Morph Revolutionary Bandwidth",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-16",
+      "name": "Service Incubate 24/7 Architectures",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-17",
+      "name": "Service Evolve Distributed Functionalities",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-18",
+      "name": "Service Re-Intermediate Bricks-And-Clicks Networks",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-19",
+      "name": "Service Aggregate Innovative Paradigms",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-20",
+      "name": "Service Repurpose Bleeding-Edge Technologies",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-21",
+      "name": "Service Evolve Bleeding-Edge Platforms",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-22",
+      "name": "Service Synergize Efficient Bandwidth",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-23",
+      "name": "Service Whiteboard Bricks-And-Clicks Communities",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-24",
+      "name": "Service Disintermediate Synergistic E-Tailers",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-25",
+      "name": "Service Repurpose Real-Time Methodologies",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-26",
+      "name": "Service Visualize Intuitive Metrics",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-27",
+      "name": "Service Whiteboard Frictionless Users",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-28",
+      "name": "Service Drive Interactive Communities",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-29",
+      "name": "Service Target Enterprise Niches",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-30",
+      "name": "Service Re-Contextualize Magnetic Methodologies",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-31",
+      "name": "Service Harness Leading-Edge E-Services",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-32",
+      "name": "Service Transition Robust Vortals",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-33",
+      "name": "Service Strategize Real-Time Partnerships",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-34",
+      "name": "Service Architect Turn-Key E-Tailers",
+      "owner_team": "Checkout",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-35",
+      "name": "Service Visualize Rich Interfaces",
+      "owner_team": "Core-Platform",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-36",
+      "name": "Service Matrix Ubiquitous Eyeballs",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-3",
+      "origin": "synthetic"
+    },
+    {
+      "service_id": "svc-37",
+      "name": "Service Morph Global Action-Items",
+      "owner_team": "Data-Engineering",
+      "environment": "production",
+      "health": "healthy",
+      "tier": "tier-2",
+      "origin": "synthetic"
+    }
+  ],
+  "dependencies": [
+    {
+      "source_id": "gateway",
+      "target_id": "checkout",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "checkout",
+      "target_id": "payments-primary",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "orders",
+      "target_id": "payments-primary",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "worker",
+      "target_id": "orders",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-01",
+      "target_id": "svc-03",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-01",
+      "target_id": "svc-11",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-01",
+      "target_id": "svc-14",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-01",
+      "target_id": "svc-21",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-02",
+      "target_id": "svc-07",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-02",
+      "target_id": "svc-10",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-02",
+      "target_id": "svc-33",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-03",
+      "target_id": "svc-19",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-03",
+      "target_id": "svc-24",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-03",
+      "target_id": "svc-30",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-04",
+      "target_id": "svc-18",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-04",
+      "target_id": "svc-20",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-04",
+      "target_id": "svc-25",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-04",
+      "target_id": "svc-30",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-05",
+      "target_id": "svc-18",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-05",
+      "target_id": "svc-23",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-06",
+      "target_id": "svc-19",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-06",
+      "target_id": "svc-29",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-07",
+      "target_id": "svc-10",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-08",
+      "target_id": "svc-01",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-08",
+      "target_id": "svc-05",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-08",
+      "target_id": "svc-19",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-09",
+      "target_id": "svc-03",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-09",
+      "target_id": "svc-11",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-09",
+      "target_id": "svc-12",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-10",
+      "target_id": "svc-01",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-10",
+      "target_id": "svc-20",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-11",
+      "target_id": "svc-09",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-11",
+      "target_id": "svc-17",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-11",
+      "target_id": "svc-36",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-12",
+      "target_id": "svc-21",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-12",
+      "target_id": "svc-25",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-12",
+      "target_id": "svc-33",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-13",
+      "target_id": "svc-04",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-13",
+      "target_id": "svc-30",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-14",
+      "target_id": "svc-02",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-14",
+      "target_id": "svc-15",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-14",
+      "target_id": "svc-27",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-14",
+      "target_id": "svc-35",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-15",
+      "target_id": "svc-01",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-15",
+      "target_id": "svc-05",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-15",
+      "target_id": "svc-16",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-15",
+      "target_id": "svc-26",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-16",
+      "target_id": "svc-04",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-16",
+      "target_id": "svc-10",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-17",
+      "target_id": "svc-14",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-17",
+      "target_id": "svc-24",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-18",
+      "target_id": "svc-27",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-19",
+      "target_id": "svc-04",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-19",
+      "target_id": "svc-09",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-19",
+      "target_id": "svc-11",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-19",
+      "target_id": "svc-37",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-20",
+      "target_id": "svc-01",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-20",
+      "target_id": "svc-21",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-20",
+      "target_id": "svc-34",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-21",
+      "target_id": "svc-09",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-23",
+      "target_id": "svc-27",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-23",
+      "target_id": "svc-36",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-24",
+      "target_id": "svc-25",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-24",
+      "target_id": "svc-26",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-25",
+      "target_id": "svc-01",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-25",
+      "target_id": "svc-10",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-25",
+      "target_id": "svc-19",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-26",
+      "target_id": "svc-09",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-27",
+      "target_id": "svc-21",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-27",
+      "target_id": "svc-32",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-27",
+      "target_id": "svc-37",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-28",
+      "target_id": "svc-24",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-29",
+      "target_id": "svc-06",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-29",
+      "target_id": "svc-11",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-29",
+      "target_id": "svc-19",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-29",
+      "target_id": "svc-26",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-29",
+      "target_id": "svc-27",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-29",
+      "target_id": "svc-33",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-30",
+      "target_id": "svc-06",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-30",
+      "target_id": "svc-12",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-30",
+      "target_id": "svc-18",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-30",
+      "target_id": "svc-21",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-31",
+      "target_id": "svc-12",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-32",
+      "target_id": "svc-10",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-32",
+      "target_id": "svc-18",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-32",
+      "target_id": "svc-24",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-32",
+      "target_id": "svc-35",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-33",
+      "target_id": "svc-14",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-33",
+      "target_id": "svc-17",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-33",
+      "target_id": "svc-23",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-33",
+      "target_id": "svc-31",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-33",
+      "target_id": "svc-34",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-33",
+      "target_id": "svc-35",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-34",
+      "target_id": "svc-06",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-35",
+      "target_id": "svc-13",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-35",
+      "target_id": "svc-17",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-35",
+      "target_id": "svc-21",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-35",
+      "target_id": "svc-23",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-36",
+      "target_id": "svc-02",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-36",
+      "target_id": "svc-21",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-37",
+      "target_id": "svc-21",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "svc-37",
+      "target_id": "svc-27",
+      "origin": "synthetic"
+    }
+  ],
+  "routes": [
+    {
+      "source_id": "checkout",
+      "target_id": "payments-primary",
+      "latency_ms": 1,
+      "cost": 1,
+      "health": "degraded",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "checkout",
+      "target_id": "premium",
+      "latency_ms": 1,
+      "cost": 10,
+      "health": "healthy",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "premium",
+      "target_id": "payments-backup",
+      "latency_ms": 1,
+      "cost": 10,
+      "health": "healthy",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "checkout",
+      "target_id": "queue",
+      "latency_ms": 2,
+      "cost": 4,
+      "health": "healthy",
+      "origin": "synthetic"
+    },
+    {
+      "source_id": "queue",
+      "target_id": "payments-backup",
+      "latency_ms": 3,
+      "cost": 4,
+      "health": "healthy",
+      "origin": "synthetic"
+    }
+  ],
+  "people": [
+    {
+      "person_id": "user-alice",
+      "name": "Alice Chen",
+      "email": "alice@chronosops.corp",
+      "team": "Payments"
+    },
+    {
+      "person_id": "user-bob",
+      "name": "Bob Martinez",
+      "email": "bob@chronosops.corp",
+      "team": "Payments"
+    },
+    {
+      "person_id": "user-carol",
+      "name": "Carol Danvers",
+      "email": "carol@chronosops.corp",
+      "team": "Checkout"
+    },
+    {
+      "person_id": "user-david",
+      "name": "David Kim",
+      "email": "david@chronosops.corp",
+      "team": "Checkout"
+    },
+    {
+      "person_id": "user-eve",
+      "name": "Eve Jenkins",
+      "email": "eve@chronosops.corp",
+      "team": "Core-Platform"
+    },
+    {
+      "person_id": "user-frank",
+      "name": "Frank Castle",
+      "email": "frank@chronosops.corp",
+      "team": "Core-Platform"
+    },
+    {
+      "person_id": "user-grace",
+      "name": "Grace Hopper",
+      "email": "grace@chronosops.corp",
+      "team": "Data-Engineering"
+    },
+    {
+      "person_id": "user-heidi",
+      "name": "Heidi Turner",
+      "email": "heidi@chronosops.corp",
+      "team": "Data-Engineering"
+    },
+    {
+      "person_id": "user-ivan",
+      "name": "Ivan Vanko",
+      "email": "ivan@chronosops.corp",
+      "team": "Payments"
+    },
+    {
+      "person_id": "user-judy",
+      "name": "Judy Alvarez",
+      "email": "judy@chronosops.corp",
+      "team": "Checkout"
+    },
+    {
+      "person_id": "user-karl",
+      "name": "Karl Urban",
+      "email": "karl@chronosops.corp",
+      "team": "Core-Platform"
+    },
+    {
+      "person_id": "user-laura",
+      "name": "Laura Kinney",
+      "email": "laura@chronosops.corp",
+      "team": "Data-Engineering"
+    }
+  ],
+  "teams": [
+    {
+      "team_id": "team-payments",
+      "name": "Payments"
+    },
+    {
+      "team_id": "team-checkout",
+      "name": "Checkout"
+    },
+    {
+      "team_id": "team-platform",
+      "name": "Core-Platform"
+    },
+    {
+      "team_id": "team-data",
+      "name": "Data-Engineering"
+    }
+  ],
+  "aliases": [
+    {
+      "alias": "Payments API",
+      "service_id": "payments-primary"
+    },
+    {
+      "alias": "pay-api",
+      "service_id": "payments-primary"
+    },
+    {
+      "alias": "Checkout Service",
+      "service_id": "checkout"
+    },
+    {
+      "alias": "Standby Gateway",
+      "service_id": "payments-backup"
+    }
+  ],
+  "document_files": [
+    "rfc-001-payments-failover.md",
+    "rfc-002-checkout-resilience.md",
+    "rfc-003-data-pipeline.md",
+    "rfc-004-legacy-routing-superseded.md",
+    "slack-001-failover-budget.md",
+    "slack-002-gateway-rate-limits.md",
+    "slack-003-lunch-planning.md",
+    "slack-004-backup-maintenance.md",
+    "ticket-PAY-101.md",
+    "ticket-PAY-102.md",
+    "ticket-CHK-201.md",
+    "ticket-OPS-301.md",
+    "pr-101-payments-queue-routing.md",
+    "pr-102-checkout-upstream-circuit-breaker.md",
+    "pr-103-gateway-burst-limits.md",
+    "pr-104-worker-retry-backoff.md"
+  ],
+  "manifest_hash": "5bb0dc7e365405b02363d5fe1cb5ac37432491e274a54495520a65169b2951b2"
+}

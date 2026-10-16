@@ -23,4 +23,16 @@ Completed observations:
 | Integration probe | `scripts/probe.py` executed live with exit code 0; all 11 required live checks passed (`required_live_checks_passed: true` in `artifacts/probe.json`). |
 | Behavior tests | `pytest -q tests/test_module_0.py` passed (2/2). |
 
+## Module 1 — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| Seed generation | `seed/generate.py` generated deterministic manifest `5bb0dc7e3654` with 45 services (8 scenario, 37 filler), 102 dependencies, 5 routes, 16 documents (4 RFCs, 4 Slack threads, 4 tickets, 4 PRs), 12 people, 4 teams, 4 aliases. |
+| NetworkX oracle | Independent NetworkX ancestor traversal confirmed failure of `payments-primary` reaches exactly `["checkout", "gateway", "orders", "worker"]`. Disconnected filler services have zero paths into scenario services. |
+| Idempotent loader | `seed/load.py` loads `ops_topology` with parameterized UNWIND batches (<=300). Twice-loaded counts strictly identical (45 services, 102 dependencies, 5 routes). |
+| Failure semantics | `:Meta {ready: false}` set during load; updated to `ready: true` only after count validation passes. Interrupted load verified to leave `is_graph_ready == False`. |
+| Behavior tests | `pytest -q tests/test_module_1.py` passed (4/4). Cumulative test suite passed (6/6). |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).
