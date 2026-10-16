@@ -1,0 +1,29 @@
+# Secrets and local credentials
+.env
+.secrets/
+*.pem
+*.key
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+ui/node_modules/
+mcp/node_modules/
+ui/dist/
+
+# Local runtime state and generated artifacts
+artifacts/
+data/
+*.log
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/

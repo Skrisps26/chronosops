@@ -1,0 +1,16 @@
+{
+  "name": "chronosops-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "cytoscape": "3.34.4"
+  },
+  "devDependencies": {
+    "vite": "8.3.4",
+    "typescript": "7.0.2",
+    "@playwright/test": "1.64.1"
+  }
+}

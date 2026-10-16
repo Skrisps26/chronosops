@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+.secrets
+.venv
+__pycache__
+.pytest_cache
+mcp/node_modules
+ui/node_modules
+artifacts
+data
