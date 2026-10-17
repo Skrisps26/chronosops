@@ -24,6 +24,7 @@ RUN groupadd --gid 10001 chronosops \
     && chown -R chronosops:chronosops /app
 
 ENV PATH="/app/.venv/bin:/app/mcp/node_modules/.bin:${PATH}" \
+    PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 USER chronosops

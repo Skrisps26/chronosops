@@ -1,9 +1,11 @@
-FROM docker.io/library/nginx:1.27-alpine
-COPY nginx.conf /etc/nginx/nginx.conf
-# Default demo credentials: acme:acme123 and globex:globex123
-# Generated with htpasswd -bc
-RUN echo 'acme:$apr1$Vq8iP0.h$q.z0NksX8j608rZ3G4N3n/' > /etc/nginx/.htpasswd \
-    && echo 'globex:$apr1$bT7oY9/x$3zT5G0lB3R2Z3p7M9x1Vv/' >> /etc/nginx/.htpasswd \
-    && chmod 644 /etc/nginx/.htpasswd
+FROM docker.io/library/nginx@sha256:62223d644fa234c3a1cc785ee14242ec47a77364226f1c811d2f669f96dc2ac8
+
+# The official Nginx entrypoint renders /etc/nginx/templates/*.template before
+# launching Nginx. Keep credentials outside the image and mount them at runtime.
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+COPY 05-load-proxy-token.sh /docker-entrypoint.d/05-load-proxy-token.envsh
+RUN rm -f /etc/nginx/conf.d/default.conf \
+    && chmod 755 /docker-entrypoint.d/05-load-proxy-token.envsh
+ENV NGINX_ENVSUBST_FILTER=^CHRONOSOPS_PROXY_TOKEN$
+
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]

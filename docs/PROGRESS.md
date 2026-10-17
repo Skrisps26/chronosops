@@ -16,9 +16,9 @@ Keep historical artifacts labeled historical/unverified; never promote them to r
 | 2 | Atomic approval and singleton real execution claim | Open | Twenty competing clients submit once |
 | 3 | Correct endpoint and fresh post-command samples | Open | Three distinct saved healthy samples after completion |
 | 4 | Immediate CommandId persistence and unknown reconciliation | Open | Submission/poll/crash outcomes never auto-resend |
-| 5 | Proxy-authenticated tenant identity | Open | No default identity or forged direct request |
-| 6 | Tenant-authorized events and incident reads | Open | Foreign API/socket payloads denied |
-| 7 | Missing reader credentials fail closed | Open | No administrator fallback |
+| 5 | Proxy-authenticated tenant identity | Local gate passed | Real Nginx rejects unauthenticated/forged direct requests |
+| 6 | Tenant-authorized events and incident reads | Local gate passed | Owned events delivered; foreign socket denied before accept |
+| 7 | Missing reader credentials fail closed | Local gate passed | No administrator fallback; missing/unknown identity tests pass |
 | 8 | Monitoring/Slack/action/memory lifecycle connected | Open | Actual controlled incident, source update, outcome and recall |
 | 9 | Grounded triage/proposal and truthful explanation | Open | Tool/evidence failure abstains |
 | 10 | Only authoritative compatible outcomes train memory | Open | Invalid outcomes excluded; compatible three-success boundary |
@@ -35,7 +35,7 @@ Keep historical artifacts labeled historical/unverified; never promote them to r
 ## Step gates
 
 1. Disarm recovery, isolate tests, correct unsupported claims — local gate passed. Changes: default-off real-action guard; server-owned test graph namespace; isolated Compose/ACL fixtures; unsupported public benchmark claims withdrawn. Test latency artifacts now use pytest temporary directories, not historical demo artifacts.
-2. Proxy identity and tenant authorization — pending.
+2. Proxy identity and tenant authorization — local gate passed. Real Nginx HTTP/WebSocket smoke and containerized isolated cumulative suite exercised; public tunnel proof remains a later gate.
 3. Verified deployment and runtime permissions — pending.
 4. Fresh monitoring evidence and outage identity — pending.
 5. Canonical ingestion and citation publication — pending.
@@ -59,6 +59,17 @@ Keep historical artifacts labeled historical/unverified; never promote them to r
 - Focused temporary-artifact check: `pytest -q tests/test_module_5.py -k concurrent` — **1 passed, 4 deselected**. This remains synthetic serial timing coverage, not the future overlapping-writer proof.
 - Actual reader smoke caught the SDK `NoPermissionError` for Globex reading Acme; isolated names were `test_suite_ops_topology` and `test_suite_company_brain`.
 - Read-only demo-count capture could not connect to the stopped demo DB at loopback6379. It was not started for tests. Separation was verified through distinct container volumes, namespace and DB ACLs; unchanged live counts are not claimed.
+
+### Step 2 commands and observations
+
+- Removed reader-to-admin fallback; proxy authentication requires a shared token and allowlisted identity, exact browser Origin checks, and tenant-scoped incident/run ownership.
+- Nginx sources its `.envsh` hook before template rendering. Root stages the private mounted password file for its worker. No passwords are baked into the image.
+- `podman build -t localhost/chronosops-test_proxy:latest proxy` succeeded using official digest `sha256:62223d644fa234c3a1cc785ee14242ec47a77364226f1c811d2f669f96dc2ac8`.
+- The previously blocked Python pull subsequently succeeded. The app image built with a local dependency-cache mount and build-only `--security-opt label=disable`, after SELinux denied the initial cache mount.
+- Podman Compose 1.5.0 rejected reset tags on newly introduced profiles. Ordinary empty profiles and test-only SELinux `:ro,z` secret mounts enabled the private services.
+- `./scripts/bootstrap-local.sh -p chronosops-test -f docker-compose.yml -f docker-compose.test.yml run --rm tests pytest -q` — **73 passed, 2 live tests deselected, 1 upstream warning in 240.34s**. Tests use `/app` PYTHONPATH; no live provider credentials are mounted.
+- Actual HTTP smoke: no auth401; Acme spoofing Globex still received its own monitoring response200; Globex spoofing Acme received404; proxy internal path403; direct API forged identity401.
+- Actual seeded Nginx HTTP/WebSocket smoke: simulation reached awaiting_approval, Acme received run_started, and Globex with a forged Acme header was denied403 before acceptance. Only test_suite_ops_topology was seeded. The earlier empty-fixture smoke produced a failed investigation, not an actionable proposal.
 
 
 ## Live prerequisite policy

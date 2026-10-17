@@ -194,11 +194,22 @@ async def reject_action(
     graph = db.select_graph(graph_names().topology)
     now_ts = datetime.now(timezone.utc).isoformat()
 
-    graph.query(
-        "MATCH (a:ApprovalRecord {approval_id: $approval_id, tenant_id: $tenant}) "
-        "SET a.status = 'rejected', a.rejected_at = $ts",
-        {"approval_id": approval_id, "tenant": tenant_id, "ts": now_ts},
-    )
+    rows = graph.query(
+        "MATCH (a:ApprovalRecord {approval_id: $approval_id, tenant_id: $tenant, incident_id: $incident_id}) "
+        "WHERE a.status IN ['pending', 'awaiting_approval'] "
+        "SET a.status = 'rejected', a.rejected_at = $ts "
+        "RETURN a.status",
+        {"approval_id": approval_id, "tenant": tenant_id, "incident_id": incident_id, "ts": now_ts},
+    ).result_set
+    if not rows:
+        existing = graph.ro_query(
+            "MATCH (a:ApprovalRecord {approval_id: $approval_id, tenant_id: $tenant, incident_id: $incident_id}) "
+            "RETURN a.status",
+            {"approval_id": approval_id, "tenant": tenant_id, "incident_id": incident_id},
+        ).result_set
+        if not existing:
+            raise ActionNotFoundError("Approval not found")
+        raise ActionConflictError("Approval cannot be rejected in its current state")
     return {
         "status": "rejected",
         "incident_id": incident_id,

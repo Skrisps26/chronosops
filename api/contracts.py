@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import hmac
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -56,20 +57,32 @@ class RejectionRequest(BaseModel):
     approval_id: str = Field(..., min_length=1, max_length=100)
 
 
+def authenticate_tenant(tenant: str | None, proxy_token: str | None) -> str:
+    """Trust only identities injected by the authenticated local reverse proxy."""
+    expected = os.environ.get("CHRONOSOPS_PROXY_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Proxy authentication is not configured")
+    if not proxy_token or not hmac.compare_digest(proxy_token.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Authenticated proxy required")
+    if tenant not in {"acme", "globex"}:
+        raise HTTPException(status_code=401, detail="Unknown authenticated tenant")
+    return tenant
+
+
 def get_tenant_id(
     x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
-    x_consumer_custom_id: str | None = Header(None, alias="X-Consumer-Custom-ID"),
+    x_proxy_token: str | None = Header(None, alias="X-ChronosOps-Proxy-Token"),
 ) -> str:
-    """Extract authenticated tenant identity, defaulting to acme."""
-    tenant = x_tenant_id or x_consumer_custom_id or "acme"
-    return tenant.strip().lower()
+    return authenticate_tenant(x_tenant_id, x_proxy_token)
 
 
-def validate_origin(request: Request) -> bool:
-    """Validate Origin header against allowed public origins."""
+def validate_origin(request: Request, require_origin: bool = False) -> bool:
+    """Validate the exact configured browser origin, including before WS accept."""
     origin = request.headers.get("origin")
     if not origin:
-        return True  # Non-browser or direct requests allowed
+        if require_origin:
+            raise HTTPException(status_code=403, detail="Browser Origin required")
+        return True
     allowed = {
         "http://localhost:8080",
         "http://127.0.0.1:8080",
@@ -81,7 +94,7 @@ def validate_origin(request: Request) -> bool:
     if custom_public:
         allowed.add(custom_public.rstrip("/"))
 
-    if origin.rstrip("/") not in allowed and not origin.endswith(".trycloudflare.com"):
+    if origin.rstrip("/") not in allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Cross-origin request from '{origin}' not permitted",

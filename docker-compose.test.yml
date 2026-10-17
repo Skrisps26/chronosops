@@ -5,6 +5,8 @@ name: chronosops-test
 
 x-test-environment: &test-environment
   CHRONOSOPS_GRAPH_PREFIX: test_suite_
+  PYTHONPATH: /app
+  CHRONOSOPS_PROXY_TOKEN: test-proxy-token-only
   FALKORDB_HOST: db
   FALKORDB_PORT: "6379"
   FALKORDB_ADMIN_USERNAME: admin
@@ -19,6 +21,7 @@ x-test-environment: &test-environment
   FALKORDB_WRITER_GLOBEX_PASSWORD: chronosops_test_writer_globex_only
   FALKORDB_QUERY_TIMEOUT_MS: "3000"
   REAL_RECOVERY_ENABLED: "false"
+  PUBLIC_ORIGIN: http://proxy:8080
   AWS_ACCESS_KEY_ID: testing
   AWS_SECRET_ACCESS_KEY: testing
   AWS_EC2_METADATA_DISABLED: "true"
@@ -43,13 +46,24 @@ services:
       - falkordb-test-acl:/var/lib/falkordb/acl
     restart: "no"
 
-  # Keep the inherited service safe if an operator targets it while inspecting
-  # this project; normal test runs target only the tests service below.
   app:
     env_file: !reset []
     environment: *test-environment
-    ports: !reset []
-    profiles: [manual]
+    command: [uvicorn, api.main:app, --host, 0.0.0.0, --port, "8000"]
+    profiles: []
+    restart: "no"
+
+  proxy:
+    build:
+      context: ./proxy
+    environment:
+      CHRONOSOPS_PROXY_TOKEN_FILE: /run/secrets/chronosops-proxy-token
+    depends_on:
+      app:
+        condition: service_started
+    volumes:
+      - ./tests/fixtures/proxy.htpasswd:/etc/nginx/.htpasswd:ro,z
+      - ./tests/fixtures/proxy-token:/run/secrets/chronosops-proxy-token:ro,z
     restart: "no"
 
   tests:
@@ -60,6 +74,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      proxy:
+        condition: service_started
     init: true
     restart: "no"
 

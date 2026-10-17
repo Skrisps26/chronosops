@@ -1,7 +1,6 @@
 """ChronosOps FastAPI application, REST endpoints, and WebSocket event stream."""
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import uuid
@@ -18,7 +17,6 @@ from falkordb import FalkorDB
 from agents.actions import ActionConflictError, ActionNotFoundError, approve_action, reject_action
 from agents.governance import governance_node
 from agents.knowledge import bus_factor, decision_provenance, resolve_service_id, who_owns
-from agents.memory import consolidate_incident, retrieve_tenant_memory
 from agents.remediation import remediation_node
 from agents.triage import triage_node
 from agents.workflow import IncidentState, create_incident_workflow
@@ -29,6 +27,7 @@ from api.contracts import (
     IncidentCreateRequest,
     QuestionRequest,
     RejectionRequest,
+    authenticate_tenant,
     get_tenant_id,
     manager,
     validate_origin,
@@ -44,7 +43,11 @@ app = FastAPI(title="ChronosOps API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8080", "http://127.0.0.1:8080",
+        "http://localhost:5173", "http://localhost:8000", "http://127.0.0.1:8000",
+        *([os.environ["PUBLIC_ORIGIN"].rstrip("/")] if os.environ.get("PUBLIC_ORIGIN") else []),
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,6 +73,76 @@ def verify_internal_token(authorization: str | None = Header(None)) -> bool:
     return True
 
 
+def _topology_graph() -> Any:
+    """Return the server-owned topology graph used for tenant ownership checks."""
+    config = get_config()
+    db = FalkorDB(
+        host=config["FALKORDB_HOST"],
+        port=int(config["FALKORDB_PORT"]),
+        username=config["FALKORDB_ADMIN_USERNAME"],
+        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
+    )
+    return db.select_graph(graph_names().topology)
+
+
+def _create_simulation_ownership(
+    *,
+    tenant_id: str,
+    session_id: str,
+    run_id: str,
+    incident_id: str,
+    service_id: str,
+) -> None:
+    """Persist server-generated ownership before emitting a run event."""
+    created_at = datetime.now(timezone.utc).isoformat()
+    _topology_graph().query(
+        "MERGE (s:Session {tenant_id: $tenant_id, session_id: $session_id}) "
+        "ON CREATE SET s.created_at = $created_at "
+        "SET s.updated_at = $created_at "
+        "CREATE (r:Run {run_id: $run_id, tenant_id: $tenant_id, "
+        "               incident_id: $incident_id, execution_mode: 'simulation', "
+        "               created_at: $created_at}) "
+        "MERGE (i:Incident {incident_id: $incident_id, tenant_id: $tenant_id}) "
+        "SET i.service_id = $service_id, i.status = 'investigating', "
+        "    i.starts_at = $created_at "
+        "MERGE (s)-[:HAS_RUN]->(r) "
+        "MERGE (r)-[:FOR_INCIDENT]->(i)",
+        {
+            "tenant_id": tenant_id,
+            "session_id": session_id,
+            "run_id": run_id,
+            "incident_id": incident_id,
+            "service_id": service_id,
+            "created_at": created_at,
+        },
+    )
+
+
+def _update_simulation_incident(
+    *, incident_id: str, tenant_id: str, incident_status: str, approval_id: str | None
+) -> None:
+    _topology_graph().query(
+        "MATCH (i:Incident {incident_id: $incident_id, tenant_id: $tenant_id}) "
+        "SET i.status = $incident_status, i.approval_id = $approval_id, "
+        "    i.updated_at = $updated_at",
+        {
+            "incident_id": incident_id,
+            "tenant_id": tenant_id,
+            "incident_status": incident_status,
+            "approval_id": approval_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def _run_belongs_to_tenant(run_id: str, tenant_id: str) -> bool:
+    rows = _topology_graph().ro_query(
+        "MATCH (r:Run {run_id: $run_id, tenant_id: $tenant_id}) RETURN r.run_id LIMIT 1",
+        {"run_id": run_id, "tenant_id": tenant_id},
+    ).result_set
+    return bool(rows)
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -77,6 +150,11 @@ async def healthz() -> dict[str, str]:
 
 @app.get("/readyz")
 async def readyz() -> dict[str, Any]:
+    if not os.environ.get("CHRONOSOPS_PROXY_TOKEN"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Proxy authentication is not configured",
+        )
     config = get_config()
     db = FalkorDB(
         host=config["FALKORDB_HOST"],
@@ -93,8 +171,11 @@ async def readyz() -> dict[str, Any]:
 
 
 @app.get("/api/monitoring")
-async def get_monitoring_status() -> dict[str, Any]:
-    """Return Prometheus blackbox probe health and connection status."""
+async def get_monitoring_status(
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict[str, Any]:
+    if tenant_id != "acme":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitoring status not found")
     prom_url = os.environ.get("PROMETHEUS_URL", "http://localhost:9090")
     client = MonitoringClient(prometheus_url=prom_url)
     target = os.environ.get("DEMO_MONITORING_TARGET", "http://127.0.0.1:8080/healthz")
@@ -229,6 +310,14 @@ async def create_incident(
     validate_origin(request)
     incident_id = f"inc-sim-{uuid.uuid4().hex[:8]}"
     run_id = f"run-{uuid.uuid4().hex[:8]}"
+    _create_simulation_ownership(
+        tenant_id=tenant_id,
+        session_id=req.session_id,
+        run_id=run_id,
+        incident_id=incident_id,
+        service_id=req.service_id,
+    )
+
 
     initial_state = IncidentState(
         incident_id=incident_id,
@@ -253,6 +342,13 @@ async def create_incident(
     # Execute LangGraph workflow
     final_state_dict = await workflow_engine.ainvoke(initial_state)
     state = IncidentState(**final_state_dict)
+    _update_simulation_incident(
+        incident_id=incident_id,
+        tenant_id=tenant_id,
+        incident_status=state.status,
+        approval_id=state.approval_id,
+    )
+
 
     # Broadcast proposal_ready event
     await manager.broadcast(
@@ -284,19 +380,14 @@ async def list_incidents(
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
     """List recent incidents for the authenticated tenant."""
-    config = get_config()
-    db = FalkorDB(
-        host=config["FALKORDB_HOST"],
-        port=int(config["FALKORDB_PORT"]),
-        username=config["FALKORDB_ADMIN_USERNAME"],
-        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
-    )
-    graph = db.select_graph(graph_names().topology)
+    graph = _topology_graph()
     rows = graph.ro_query(
-        "MATCH (i:Incident) RETURN i.incident_id, i.service_id, i.status, i.starts_at ORDER BY i.starts_at DESC LIMIT 20"
+        "MATCH (i:Incident {tenant_id: $tenant}) "
+        "RETURN i.incident_id, i.service_id, i.status, i.starts_at "
+        "ORDER BY i.starts_at DESC LIMIT 20",
+        {"tenant": tenant_id},
     ).result_set
 
-    # Also list approvals
     appr_rows = graph.ro_query(
         "MATCH (a:ApprovalRecord {tenant_id: $tenant}) "
         "RETURN a.approval_id, a.incident_id, a.service_id, a.action_kind, a.status, a.expires_at "
@@ -315,17 +406,13 @@ async def get_incident(
     incident_id: str,
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
-    config = get_config()
-    db = FalkorDB(
-        host=config["FALKORDB_HOST"],
-        port=int(config["FALKORDB_PORT"]),
-        username=config["FALKORDB_ADMIN_USERNAME"],
-        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
-    )
-    graph = db.select_graph(graph_names().topology)
+    graph = _topology_graph()
     rows = graph.ro_query(
-        "MATCH (a:ApprovalRecord {incident_id: $id, tenant_id: $tenant}) "
-        "RETURN a.approval_id, a.service_id, a.action_kind, a.status, a.proposed_action, a.expires_at",
+        "MATCH (i:Incident {incident_id: $id, tenant_id: $tenant}) "
+        "OPTIONAL MATCH (a:ApprovalRecord {incident_id: $id, tenant_id: $tenant}) "
+        "RETURN i.service_id, i.status, a.approval_id, a.action_kind, "
+        "       a.status, a.proposed_action, a.expires_at "
+        "LIMIT 1",
         {"id": incident_id, "tenant": tenant_id},
     ).result_set
 
@@ -335,12 +422,12 @@ async def get_incident(
     r = rows[0]
     return {
         "incident_id": incident_id,
-        "approval_id": r[0],
-        "service_id": r[1],
-        "action_kind": r[2],
-        "status": r[3],
-        "proposed_action": json.loads(r[4]) if r[4] else {},
-        "expires_at": r[5],
+        "approval_id": r[2],
+        "service_id": r[0],
+        "action_kind": r[3],
+        "status": r[4] or r[1],
+        "proposed_action": json.loads(r[5]) if r[5] else {},
+        "expires_at": r[6],
     }
 
 
@@ -375,11 +462,19 @@ async def reject(
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
     validate_origin(request)
-    return await reject_action(incident_id=incident_id, approval_id=req.approval_id, tenant_id=tenant_id)
+    try:
+        return await reject_action(incident_id=incident_id, approval_id=req.approval_id, tenant_id=tenant_id)
+    except ActionNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ActionConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
 @app.get("/api/sources/{document_id}")
-async def get_source_document(document_id: str) -> dict[str, Any]:
+async def get_source_document(
+    document_id: str,
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict[str, Any]:
     """Retrieve full text and metadata of a source document."""
     # Look in DOCS_DIR
     target = DOCS_DIR / f"{document_id}.md"
@@ -399,10 +494,23 @@ async def get_source_document(document_id: str) -> dict[str, Any]:
 
 @app.websocket("/api/runs/{run_id}/events")
 async def websocket_events(websocket: WebSocket, run_id: str) -> None:
+    try:
+        tenant_id = authenticate_tenant(
+            websocket.headers.get("X-Tenant-ID"),
+            websocket.headers.get("X-ChronosOps-Proxy-Token"),
+        )
+        validate_origin(websocket, require_origin=True)
+    except HTTPException:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    if not _run_belongs_to_tenant(run_id, tenant_id):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await manager.connect(run_id, websocket)
     try:
         while True:
-            # Keep connection open; clients listen for events
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(run_id, websocket)
@@ -435,7 +543,8 @@ async def receive_alert(
         incident_id = f"inc-{fingerprint}"
         graph.query(
             "MERGE (i:Incident {incident_id: $incident_id}) "
-            "SET i.alertname = $alertname, "
+            "SET i.tenant_id = 'acme', "
+            "    i.alertname = $alertname, "
             "    i.service_id = $service, "
             "    i.status = $status, "
             "    i.starts_at = $starts_at, "

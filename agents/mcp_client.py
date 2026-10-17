@@ -10,6 +10,7 @@ from typing import Any
 
 from dotenv import dotenv_values
 from mcp import Client, StdioServerParameters
+from agents.settings import require_tenant
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRETS_FILE = ROOT / ".secrets" / "db.env"
@@ -26,7 +27,7 @@ class FalkorDBMcpClient:
     """Provides managed async stdio sessions to the official FalkorDB MCP server."""
 
     def __init__(self, tenant: str = "acme", host: str | None = None, port: int | None = None) -> None:
-        self.tenant = tenant.lower()
+        self.tenant = require_tenant(tenant)
         self.secrets = get_db_secrets()
         self.host = host or self.secrets.get("FALKORDB_HOST", "127.0.0.1")
         self.port = port or int(self.secrets.get("FALKORDB_PORT", 6379))
@@ -35,9 +36,7 @@ class FalkorDBMcpClient:
         self.username = self.secrets.get(f"FALKORDB_READER_{upper}_USERNAME", f"reader_{self.tenant}")
         self.password = self.secrets.get(f"FALKORDB_READER_{upper}_PASSWORD", "")
         if not self.password:
-            # Fallback to admin if tenant password is not set
-            self.username = self.secrets.get("FALKORDB_ADMIN_USERNAME", "admin")
-            self.password = self.secrets.get("FALKORDB_ADMIN_PASSWORD", "")
+            raise ValueError(f"Missing reader credentials for tenant {self.tenant}")
 
     def _get_server_params(self, readonly: bool = True) -> StdioServerParameters:
         if not MCP_BIN.is_file():
