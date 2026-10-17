@@ -1,202 +1,223 @@
-"""Deploy, manage, and inspect the ChronosOps disposable EC2 demo stack."""
+"""Preflight and manage only the dedicated, explicitly tagged disposable demo stack."""
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
-import sys
-import urllib.request
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
+import urllib.request
 
-import boto3
+from botocore.exceptions import ClientError
 from dotenv import dotenv_values
+
+from integrations.deployment import operator_session, verify_deployment
+from seed.load import get_config as database_config
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_FILE = ROOT / "infra" / "demo.yaml"
 ARTIFACTS_DIR = ROOT / "artifacts"
 STACK_ARTIFACT = ARTIFACTS_DIR / "demo-stack.json"
-SECRETS_FILE = ROOT / ".secrets" / "db.env"
+AMI_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
 
 
 def get_config() -> dict[str, str]:
-    config = {k: v for k, v in dotenv_values(SECRETS_FILE).items() if isinstance(v, str) and v}
-    config.update({k: v for k, v in os.environ.items() if v})
+    config = database_config()
+    config.update({key: value for key, value in dotenv_values(ROOT / ".env").items() if value})
+    config.update({key: value for key, value in os.environ.items() if value})
     config.setdefault("AWS_REGION", "us-east-1")
     config.setdefault("DEMO_STACK_NAME", "chronosops-demo")
     return config
 
 
 def get_public_ip() -> str:
-    """Discover current external IPv4 for restricting security group ingress."""
-    urls = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://icanhazip.com"]
-    for url in urls:
-        try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                ip = resp.read().decode("utf-8").strip()
-                if ip and len(ip.split(".")) == 4:
-                    return f"{ip}/32"
-        except Exception:
-            continue
-    raise RuntimeError("Could not determine public IPv4. Please supply --operator-ip manually.")
+    with urllib.request.urlopen("https://checkip.amazonaws.com", timeout=5) as response:
+        return str(ipaddress.IPv4Network(response.read().decode().strip() + "/32"))
+
+
+def _operator_ip(value: str | None) -> str:
+    network = ipaddress.IPv4Network(value or get_public_ip())
+    if network.prefixlen != 32 or not network.network_address.is_global:
+        raise ValueError("Monitoring host must be a globally routable IPv4 /32")
+    return str(network)
 
 
 def get_cfn_client(config: dict[str, str]) -> Any:
-    kwargs: dict[str, Any] = {"region_name": config["AWS_REGION"]}
-    if config.get("AWS_PROFILE"):
-        kwargs["profile_name"] = config["AWS_PROFILE"]
-    session = boto3.Session(**kwargs)
-    return session.client("cloudformation")
+    return operator_session(config).client("cloudformation")
+
+
+def stack_exists(cfn: Any, stack_name: str) -> bool:
+    try:
+        cfn.describe_stacks(StackName=stack_name)
+        return True
+    except ClientError as error:
+        details = error.response["Error"]
+        if details["Code"] == "ValidationError" and details["Message"] == f"Stack with id {stack_name} does not exist":
+            return False
+        raise
+
+
+def _unit_price(pricing: Any, service: str, filters: dict[str, str], *, usage_suffix: str | None = None) -> dict[str, str]:
+    """Resolve one unambiguous USD on-demand unit price, retaining catalog provenance."""
+    prices: list[dict[str, str]] = []
+    paginator = pricing.get_paginator("get_products")
+    for page in paginator.paginate(ServiceCode=service, FormatVersion="aws_v1",
+                                    Filters=[{"Type": "TERM_MATCH", "Field": key, "Value": value}
+                                             for key, value in filters.items()]):
+        for encoded in page["PriceList"]:
+            product = json.loads(encoded)
+            attributes = product["product"]["attributes"]
+            if usage_suffix and not attributes.get("usagetype", "").endswith(usage_suffix):
+                continue
+            for term in product.get("terms", {}).get("OnDemand", {}).values():
+                for dimension in term["priceDimensions"].values():
+                    price = Decimal(dimension["pricePerUnit"]["USD"])
+                    if dimension.get("beginRange") == "0" and dimension.get("endRange") == "Inf" and price > 0:
+                        prices.append({"usd": str(price), "unit": dimension["unit"],
+                                       "sku": product["product"]["sku"], "effective_at": term["effectiveDate"],
+                                       "source": "https://pricing.us-east-1.amazonaws.com/"})
+    if len(prices) != 1:
+        raise ValueError(f"Expected one current on-demand price for {service}; received {len(prices)}")
+    return prices[0]
+
+
+def preflight(config: dict[str, str], *, operator_ip: str, instance_type: str = "t4g.micro") -> dict[str, Any]:
+    session = operator_session(config)
+    ec2, ssm = session.client("ec2"), session.client("ssm")
+    account = session.client("sts").get_caller_identity()["Account"]
+    offering = ec2.describe_instance_type_offerings(LocationType="region", Filters=[
+        {"Name": "location", "Values": [config["AWS_REGION"]]},
+        {"Name": "instance-type", "Values": [instance_type]}])["InstanceTypeOfferings"]
+    if not offering:
+        raise ValueError("Selected ARM instance type is unavailable in this region")
+    cpu = ec2.describe_instance_types(InstanceTypes=[instance_type])["InstanceTypes"][0]["VCpuInfo"]["DefaultVCpus"]
+    quota = session.client("service-quotas").get_service_quota(ServiceCode="ec2", QuotaCode="L-1216C47A")["Quota"]["Value"]
+    if quota < cpu:
+        raise ValueError("Standard on-demand vCPU quota cannot fit the selected instance")
+    ami_id = ssm.get_parameter(Name=AMI_PARAMETER)["Parameter"]["Value"]
+    images = ec2.describe_images(ImageIds=[ami_id], Owners=["amazon"])["Images"]
+    if len(images) != 1 or images[0]["Architecture"] != "arm64" or images[0]["State"] != "available":
+        raise ValueError("The current Amazon ARM64 AMI is not available")
+    image = images[0]
+    if image["RootDeviceName"] != "/dev/xvda":
+        raise ValueError("Selected AMI root mapping does not match the demo template")
+    root = next(row["Ebs"] for row in image["BlockDeviceMappings"] if row["DeviceName"] == image["RootDeviceName"])
+    root_size = max(8, root["VolumeSize"])
+    pricing = session.client("pricing", region_name="us-east-1")
+    region_filter = {"regionCode": config["AWS_REGION"]}
+    compute = _unit_price(pricing, "AmazonEC2", {**region_filter, "productFamily": "Compute Instance",
+        "instanceType": instance_type, "operatingSystem": "Linux", "tenancy": "Shared",
+        "preInstalledSw": "NA", "capacitystatus": "Used"})
+    storage = _unit_price(pricing, "AmazonEC2", {**region_filter, "productFamily": "Storage"}, usage_suffix="EBS:VolumeUsage.gp3")
+    address = _unit_price(pricing, "AmazonVPC", region_filter, usage_suffix="PublicIPv4:InUseAddress")
+    if compute["unit"] != "Hrs" or address["unit"] != "Hrs" or storage["unit"] != "GB-Mo":
+        raise ValueError("Pricing catalog units changed; refusing an unverified estimate")
+    hours = Decimal(6)
+    total = hours * (Decimal(compute["usd"]) + Decimal(address["usd"]) + Decimal(storage["usd"]) * root_size / Decimal(730))
+    return {"account_id": account, "region": config["AWS_REGION"], "operator_ip": operator_ip,
+            "instance_type": instance_type, "ami_id": ami_id, "root_volume_gib": root_size,
+            "standard_vcpu_quota": quota, "required_vcpus": cpu,
+            "quota_note": "Quota limit, not available headroom; AWS still checks current usage/capacity at launch.",
+            "prices": {"compute": compute, "gp3": storage, "ipv4": address},
+            "hours": 6, "estimated_usd": str(total.quantize(Decimal("0.000001"))),
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "exclusions": "Data transfer, taxes and Bedrock; EBS continues billing while stopped. 730h/month storage conversion."}
 
 
 def run_preflight(args: argparse.Namespace) -> int:
-    config = get_config()
-    print("=" * 60)
-    print("CHRONOSOPS DEMO WORKLOAD PREFLIGHT ESTIMATE")
-    print("=" * 60)
-    ip = args.operator_ip or get_public_ip()
-    print(f"Region:                {config['AWS_REGION']}")
-    print(f"Stack Name:            {config['DEMO_STACK_NAME']}")
-    print(f"Monitoring Host IP:    {ip}")
-    print("Workload:              1x t4g.micro (ARM64 AL2023, 1GB RAM, 8GB gp3 EBS)")
-    print("\nEstimated 6-hour rehearsal & demo cost breakdown:")
-    print("  - EC2 t4g.micro:     6 hrs @ ~$0.0084/hr = $0.050")
-    print("  - Public IPv4:       6 hrs @ ~$0.0050/hr = $0.030")
-    print("  - 8GB gp3 EBS:       6 hrs @ ~$0.0001/hr = $0.001")
-    print("  ---------------------------------------------")
-    print("  TOTAL WORKLOAD:      ~$0.081 for 6 hours")
-    print("  (Bedrock inference and embedding metered separately on AWS)")
-    print("=" * 60)
+    report = preflight(get_config(), operator_ip=_operator_ip(args.operator_ip), instance_type=args.instance_type)
+    print(json.dumps(report, indent=2))
     return 0
 
 
 def run_deploy(args: argparse.Namespace) -> int:
     config = get_config()
+    expires = datetime.fromisoformat(args.expires_at.replace("Z", "+00:00"))
+    if expires.tzinfo is None or expires <= datetime.now(timezone.utc):
+        raise ValueError("Deployment expiry must be a future timezone-aware timestamp")
+    expiry = expires.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    report = preflight(config, operator_ip=_operator_ip(args.operator_ip), instance_type=args.instance_type)
     cfn = get_cfn_client(config)
-    stack_name = config["DEMO_STACK_NAME"]
-    template_body = TEMPLATE_FILE.read_text(encoding="utf-8")
-    operator_ip = args.operator_ip or get_public_ip()
-
-    print(f"Deploying stack '{stack_name}' with OperatorIp={operator_ip}...")
-    params = [
-        {"ParameterKey": "OperatorIp", "ParameterValue": operator_ip},
-        {"ParameterKey": "InstanceType", "ParameterValue": "t4g.micro"},
-    ]
-
-    try:
-        cfn.describe_stacks(StackName=stack_name)
-        exists = True
-    except Exception:
-        exists = False
-
-    if exists:
-        print(f"Stack {stack_name} already exists. Updating...")
+    params = {"OperatorIp": report["operator_ip"], "InstanceType": report["instance_type"],
+              "AmiId": report["ami_id"], "RootVolumeSize": str(report["root_volume_gib"]),
+              "RecoveryAssumerArn": args.recovery_assumer_arn, "Operator": args.operator,
+              "ExpiresAt": expiry}
+    request = {"StackName": config["DEMO_STACK_NAME"], "TemplateBody": TEMPLATE_FILE.read_text(),
+               "Parameters": [{"ParameterKey": key, "ParameterValue": value} for key, value in params.items()],
+               "Capabilities": ["CAPABILITY_IAM"],
+               "Tags": [{"Key": key, "Value": value} for key, value in {
+                   "Project": "ChronosOps", "Environment": "demo", "Operator": args.operator,
+                   "ExpiresAt": expiry}.items()]}
+    cfn.validate_template(TemplateBody=request["TemplateBody"])
+    if stack_exists(cfn, config["DEMO_STACK_NAME"]):
+        # A similarly named pre-existing stack is never permission to modify unrelated resources.
+        existing = cfn.describe_stacks(StackName=config["DEMO_STACK_NAME"])["Stacks"][0]
+        tags = {row["Key"]: row["Value"] for row in existing.get("Tags", [])}
+        if tags.get("Project") != "ChronosOps" or tags.get("Environment") != "demo":
+            raise ValueError("Existing stack is not the dedicated ChronosOps demo")
         try:
-            cfn.update_stack(
-                StackName=stack_name,
-                TemplateBody=template_body,
-                Parameters=params,
-                Capabilities=["CAPABILITY_IAM"],
-            )
-            waiter = cfn.get_waiter("stack_update_complete")
-            waiter.wait(StackName=stack_name)
-        except Exception as e:
-            if "No updates are to be performed" in str(e):
-                print("Stack is up to date.")
-            else:
+            cfn.update_stack(**request)
+        except ClientError as error:
+            if error.response["Error"]["Code"] != "ValidationError" or error.response["Error"]["Message"] != "No updates are to be performed.":
                 raise
+        else:
+            cfn.get_waiter("stack_update_complete").wait(StackName=config["DEMO_STACK_NAME"])
     else:
-        print(f"Creating stack {stack_name}...")
-        cfn.create_stack(
-            StackName=stack_name,
-            TemplateBody=template_body,
-            Parameters=params,
-            Capabilities=["CAPABILITY_IAM"],
-        )
-        waiter = cfn.get_waiter("stack_create_complete")
-        waiter.wait(StackName=stack_name)
-
-    # Capture stack outputs
-    stack_desc = cfn.describe_stacks(StackName=stack_name)["Stacks"][0]
-    outputs = {o["OutputKey"]: o["OutputValue"] for o in stack_desc.get("Outputs", [])}
-
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    artifact_payload = {
-        "stack_name": stack_name,
-        "stack_id": stack_desc["StackId"],
-        "region": config["AWS_REGION"],
-        "outputs": outputs,
-        "deployed_at": datetime.now(timezone.utc).isoformat(),
-    }
-    STACK_ARTIFACT.write_text(json.dumps(artifact_payload, indent=2) + "\n", encoding="utf-8")
-    print(f"Deployment complete. Artifact saved to {STACK_ARTIFACT}")
-    print(json.dumps(outputs, indent=2))
+        cfn.create_stack(**request)
+        cfn.get_waiter("stack_create_complete").wait(StackName=config["DEMO_STACK_NAME"])
+    print(json.dumps(verify_deployment(config, publish=True), indent=2))
     return 0
 
 
 def run_status(args: argparse.Namespace) -> int:
+    print(json.dumps(verify_deployment(get_config(), publish=args.publish), indent=2))
+    return 0
+
+
+def run_stop(args: argparse.Namespace) -> int:
     config = get_config()
-    cfn = get_cfn_client(config)
-    stack_name = config["DEMO_STACK_NAME"]
-    try:
-        desc = cfn.describe_stacks(StackName=stack_name)["Stacks"][0]
-        print(f"Stack {stack_name}: {desc['StackStatus']}")
-        for o in desc.get("Outputs", []):
-            print(f"  {o['OutputKey']}: {o['OutputValue']}")
-        return 0
-    except Exception as e:
-        print(f"Error querying stack {stack_name}: {e}")
-        return 1
+    binding = verify_deployment(config)
+    if args.confirm_instance != binding["instance_id"]:
+        raise ValueError("Exact instance confirmation does not match verified deployment")
+    print("Stopping only the bound demo instance; EBS storage continues billing until explicit teardown.")
+    ec2 = operator_session(config).client("ec2")
+    ec2.stop_instances(InstanceIds=[binding["instance_id"]])
+    ec2.get_waiter("instance_stopped").wait(InstanceIds=[binding["instance_id"]])
+    return 0
 
 
 def run_destroy(args: argparse.Namespace) -> int:
     config = get_config()
+    binding = verify_deployment(config)
+    if args.confirm_stack != binding["stack_id"]:
+        raise ValueError("Full verified stack ARN confirmation is required for teardown")
     cfn = get_cfn_client(config)
-    stack_name = config["DEMO_STACK_NAME"]
-
-    if not args.force:
-        confirm = input(f"Are you sure you want to delete stack '{stack_name}'? Type '{stack_name}' to confirm: ")
-        if confirm != stack_name:
-            print("Aborted.")
-            return 1
-
-    print(f"Deleting stack {stack_name}...")
-    cfn.delete_stack(StackName=stack_name)
-    waiter = cfn.get_waiter("stack_delete_complete")
-    waiter.wait(StackName=stack_name)
-    if STACK_ARTIFACT.is_file():
-        STACK_ARTIFACT.unlink()
-    print("Stack deleted successfully.")
+    cfn.delete_stack(StackName=binding["stack_id"])
+    cfn.get_waiter("stack_delete_complete").wait(StackName=binding["stack_id"])
+    STACK_ARTIFACT.unlink(missing_ok=True)
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    p_pre = subparsers.add_parser("preflight", help="Show cost estimate and requirements")
-    p_pre.add_argument("--operator-ip", help="Override auto-discovered public IPv4 /32")
-
-    p_dep = subparsers.add_parser("deploy", help="Deploy or update CloudFormation demo stack")
-    p_dep.add_argument("--operator-ip", help="Override auto-discovered public IPv4 /32")
-
-    subparsers.add_parser("status", help="Query stack and instance status")
-
-    p_des = subparsers.add_parser("destroy", help="Tear down demo stack")
-    p_des.add_argument("--force", action="store_true", help="Skip confirmation prompt")
-
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("preflight", "deploy"):
+        command = commands.add_parser(name)
+        command.add_argument("--operator-ip")
+        command.add_argument("--instance-type", choices=["t4g.nano", "t4g.micro"], default="t4g.micro")
+        if name == "deploy":
+            command.add_argument("--recovery-assumer-arn", required=True)
+            command.add_argument("--operator", required=True)
+            command.add_argument("--expires-at", required=True)
+    commands.add_parser("status").add_argument("--publish", action="store_true")
+    commands.add_parser("stop").add_argument("--confirm-instance", required=True)
+    commands.add_parser("destroy").add_argument("--confirm-stack", required=True)
     args = parser.parse_args()
-
-    if args.command == "preflight":
-        return run_preflight(args)
-    elif args.command == "deploy":
-        return run_deploy(args)
-    elif args.command == "status":
-        return run_status(args)
-    elif args.command == "destroy":
-        return run_destroy(args)
-    return 0
+    return {"preflight": run_preflight, "deploy": run_deploy, "status": run_status,
+            "stop": run_stop, "destroy": run_destroy}[args.command](args)
 
 
 if __name__ == "__main__":

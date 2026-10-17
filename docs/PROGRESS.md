@@ -36,7 +36,7 @@ Keep historical artifacts labeled historical/unverified; never promote them to r
 
 1. Disarm recovery, isolate tests, correct unsupported claims — local gate passed. Changes: default-off real-action guard; server-owned test graph namespace; isolated Compose/ACL fixtures; unsupported public benchmark claims withdrawn. Test latency artifacts now use pytest temporary directories, not historical demo artifacts.
 2. Proxy identity and tenant authorization — local gate passed. Real Nginx HTTP/WebSocket smoke and containerized isolated cumulative suite exercised; public tunnel proof remains a later gate.
-3. Verified deployment and runtime permissions — pending.
+3. Verified deployment and runtime permissions — local gate passed; live gate blocked by organization SCP. No real recovery permitted.
 4. Fresh monitoring evidence and outage identity — pending.
 5. Canonical ingestion and citation publication — pending.
 6. Slack lifecycle and notifications — pending.
@@ -70,6 +70,18 @@ Keep historical artifacts labeled historical/unverified; never promote them to r
 - `./scripts/bootstrap-local.sh -p chronosops-test -f docker-compose.yml -f docker-compose.test.yml run --rm tests pytest -q` — **73 passed, 2 live tests deselected, 1 upstream warning in 240.34s**. Tests use `/app` PYTHONPATH; no live provider credentials are mounted.
 - Actual HTTP smoke: no auth401; Acme spoofing Globex still received its own monitoring response200; Globex spoofing Acme received404; proxy internal path403; direct API forged identity401.
 - Actual seeded Nginx HTTP/WebSocket smoke: simulation reached awaiting_approval, Acme received run_started, and Globex with a forged Acme header was denied403 before acceptance. Only test_suite_ops_topology was seeded. The earlier empty-fixture smoke produced a failed investigation, not an actionable proposal.
+
+### Step 3 commands and observations
+
+- Deployment verifier, dedicated recovery role/profile, pinned document submission and operator fault-window safety implemented. The runtime profile cannot fall back to the operator identity; previously active bindings remain inactive history after a verified publication.
+- Preflight inspects offering, quota limit, AMI/root minimum and current public catalog pricing; the quota report explicitly does not claim available headroom. Stack discovery errors other than exact not-found propagate.
+- `podman build -t localhost/chronosops-test_tests:latest .` succeeded.
+- `uvx --from cfn-lint==1.57.2 cfn-lint infra/demo.yaml` — exit0 after correcting the CloudFormation CPUCredits property and removing unnecessary substitution.
+- Isolated focused gate: `pytest -q tests/test_deployment_binding.py tests/test_deployment_template.py tests/test_fault_safety.py tests/test_module_3a.py` — **30 passed, 1 upstream warning in 6.42s**.
+- Actual container entry points `python -m scripts.demo_stack --help` and `python -m scripts.fault --help` succeeded; the latter exposes only stop/start.
+- Actual function smoke published and reread a binding in isolated FalkorDB, then refused a foreign expected instance without replacing it. AWS responses were explicitly synthetic adapters; the database publication was real. This is not live AWS verification.
+- After authorized AWS login renewal, the official MCP probe executed STS successfully but CloudFormation DescribeStacks was denied by an organization SCP in us-east-1. Live template/deployment/role-permission verification remains blocked. No fault or AWS resource mutation occurred.
+- Cumulative command: `./scripts/bootstrap-local.sh -p chronosops-test -f docker-compose.yml -f docker-compose.test.yml run --rm tests pytest -q` — **98 passed, 2 live tests deselected, 1 upstream warning in 240.36s**.
 
 
 ## Live prerequisite policy

@@ -19,9 +19,25 @@ Parameters:
     AllowedValues: ['t4g.nano', 't4g.micro']
     Description: 'Arm64 burstable Graviton instance type'
   AmiId:
-    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
-    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64'
-    Description: 'SSM public parameter resolving current AL2023 ARM64 AMI'
+    Type: 'AWS::EC2::Image::Id'
+    Description: 'Exact Amazon ARM64 AMI ID resolved and inspected by preflight'
+  RootVolumeSize:
+    Type: Number
+    MinValue: 1
+    Description: 'Root volume GiB discovered from the selected AMI before deployment'
+  Operator:
+    Type: String
+    AllowedPattern: '^.+$'
+    ConstraintDescription: 'Must identify the operator responsible for this disposable stack.'
+  ExpiresAt:
+    Type: String
+    AllowedPattern: '^20[0-9]{2}-(0[1-9]|1[0-2])-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z$'
+    ConstraintDescription: 'Must be an ISO-8601 UTC expiration timestamp.'
+  RecoveryAssumerArn:
+    Type: String
+    AllowedPattern: '^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$'
+    ConstraintDescription: 'Must be the exact IAM role ARN allowed to assume the recovery role.'
+    Description: 'Runtime principal trusted to assume the restricted recovery role'
 
 Resources:
   VPC:
@@ -35,6 +51,10 @@ Resources:
           Value: 'ChronosOps'
         - Key: 'Environment'
           Value: 'demo'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
 
   InternetGateway:
     Type: 'AWS::EC2::InternetGateway'
@@ -42,6 +62,12 @@ Resources:
       Tags:
         - Key: 'Project'
           Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
 
   VPCGatewayAttachment:
     Type: 'AWS::EC2::VPCGatewayAttachment'
@@ -60,6 +86,10 @@ Resources:
           Value: 'ChronosOps'
         - Key: 'Environment'
           Value: 'demo'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
 
   RouteTable:
     Type: 'AWS::EC2::RouteTable'
@@ -68,6 +98,12 @@ Resources:
       Tags:
         - Key: 'Project'
           Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
 
   DefaultRoute:
     Type: 'AWS::EC2::Route'
@@ -101,6 +137,12 @@ Resources:
       Tags:
         - Key: 'Project'
           Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
 
   InstanceRole:
     Type: 'AWS::IAM::Role'
@@ -117,7 +159,62 @@ Resources:
       Tags:
         - Key: 'Project'
           Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
 
+
+  RecoveryRole:
+    Type: 'AWS::IAM::Role'
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: 'Separates the runtime restart capability from operator provisioning and fault injection.'
+        must:
+          - 'Trust only RecoveryAssumerArn; send only StartNginxDocument to DemoInstance.'
+          - 'Never allow arbitrary documents, fault injection, instance mutation, PassRole, or command listing.'
+        mutable: change-with-constraints
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              AWS: !Ref RecoveryAssumerArn
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'BoundRecoveryOnly'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: 'SendOnlyBoundDocumentToBoundInstance'
+                Effect: 'Allow'
+                Action: 'ssm:SendCommand'
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${StartNginxDocument}'
+                  - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${DemoInstance}'
+              - Sid: 'ReadOnlyBoundRecoveryDocument'
+                Effect: 'Allow'
+                Action: 'ssm:GetDocument'
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${StartNginxDocument}'
+              - Sid: 'ReadOnlyRecoveryStatus'
+                Effect: 'Allow'
+                Action:
+                  - 'ssm:GetCommandInvocation'
+                  - 'ssm:DescribeInstanceInformation'
+                  - 'ec2:DescribeInstances'
+                Resource: '*'
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
   InstanceProfile:
     Type: 'AWS::IAM::InstanceProfile'
     Properties:
@@ -136,16 +233,18 @@ Resources:
       BlockDeviceMappings:
         - DeviceName: '/dev/xvda'
           Ebs:
-            VolumeSize: 8
+            VolumeSize: !Ref RootVolumeSize
             VolumeType: 'gp3'
             Encrypted: true
             DeleteOnTermination: true
+      CreditSpecification:
+        CPUCredits: 'standard'
       MetadataOptions:
         HttpTokens: 'required'
         HttpPutResponseHopLimit: 1
         HttpEndpoint: 'enabled'
       UserData:
-        Fn::Base64: !Sub |
+        Fn::Base64: |
           #!/bin/bash
           set -e
           dnf install -y nginx
@@ -161,6 +260,10 @@ Resources:
           Value: 'demo'
         - Key: 'Service'
           Value: 'payments-primary'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
 
   StopNginxDocument:
     Type: 'AWS::SSM::Document'
@@ -176,8 +279,19 @@ Resources:
             name: 'stopNginxWithWatchdog'
             inputs:
               runCommand:
+                - 'set -eu'
                 - '/usr/bin/systemd-run --on-active=10m --unit=chronosops-watchdog /usr/bin/systemctl start nginx.service'
+                - '/usr/bin/systemctl is-active --quiet chronosops-watchdog.timer'
                 - '/usr/bin/systemctl stop nginx.service'
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
 
   StartNginxDocument:
     Type: 'AWS::SSM::Document'
@@ -193,9 +307,19 @@ Resources:
             name: 'startNginx'
             inputs:
               runCommand:
-                - '/usr/bin/systemctl stop chronosops-watchdog.timer || true'
+                - 'set -eu'
                 - '/usr/bin/systemctl start nginx.service'
-                - '/usr/bin/systemctl is-active nginx.service'
+                - '/usr/bin/systemctl is-active --quiet nginx.service'
+                - '/usr/bin/systemctl stop chronosops-watchdog.timer || true'
+      Tags:
+        - Key: 'Project'
+          Value: 'ChronosOps'
+        - Key: 'Environment'
+          Value: 'demo'
+        - Key: 'Operator'
+          Value: !Ref Operator
+        - Key: 'ExpiresAt'
+          Value: !Ref ExpiresAt
 
 Outputs:
   InstanceId:
@@ -213,3 +337,6 @@ Outputs:
   SecurityGroupId:
     Description: 'Demo security group ID'
     Value: !Ref SecurityGroup
+  RecoveryRoleArn:
+    Description: 'Restricted runtime recovery role ARN'
+    Value: !GetAtt RecoveryRole.Arn

@@ -49,6 +49,30 @@ npm run build --prefix ui
 ```
 This generates and loads the 45-service topology into `ops_topology`, and ingests 16 architecture documents into `company_brain` via GraphRAG-SDK with Amazon Bedrock.
 
+### Disposable workload safety
+
+Real recovery stays disabled with `REAL_RECOVERY_ENABLED=false`. Deployment, fault injection and teardown are operator-only; the app must never mount the administrator operator profile.
+
+- `AWS_PROFILE`: operator/generation profile on the host.
+- `AWS_RECOVERY_PROFILE`: a distinct existing SDK assume-role profile for the exact restricted role returned by the demo stack. No fallback to `AWS_PROFILE`.
+- Deploy requires an exact trusted assumer role ARN, operator label and future UTC expiry. Preflight resolves the current ARM64 AMI/root size and queries actual on-demand pricing; denied discovery is not permission to create.
+
+```bash
+AWS_PROFILE=sai uv run --no-env-file python -m scripts.demo_stack preflight
+AWS_PROFILE=sai uv run --no-env-file python -m scripts.demo_stack deploy \
+  --recovery-assumer-arn "$RECOVERY_ASSUMER_ARN" --operator "$USER" \
+  --expires-at "$DEMO_EXPIRES_AT"
+AWS_PROFILE=sai uv run --no-env-file python -m scripts.demo_stack status --publish
+```
+
+`RECOVERY_ASSUMER_ARN` must identify the intended runtime principal; `DEMO_EXPIRES_AT` is a future UTC timestamp such as the operator's planned shutdown time. Neither is a credential. Publication verifies current AWS evidence before binding the instance and `/healthz` URL in FalkorDB.
+
+The operator fault CLI accepts only `stop --confirm-instance <verified-id>` and `start --confirm-instance <verified-id>`. Start verifies the service before cancelling its watchdog. An unknown submission/window blocks automatic retry and requires reconciliation. There is no standalone watchdog-cancellation command.
+
+`scripts.demo_stack stop --confirm-instance <verified-id>` stops only the bound instance; **EBS continues billing**. Teardown is explicit with `destroy --confirm-stack <full-verified-stack-arn>`; it never runs automatically.
+
+Current live prerequisite: the organization's SCP denies CloudFormation discovery in `us-east-1`. Live deployment, restricted-role simulation and real recovery have not passed. Local template and isolated behavior checks do not substitute for those gates.
+
 ---
 
 ## 🎬 Running the Three-Track Demonstration

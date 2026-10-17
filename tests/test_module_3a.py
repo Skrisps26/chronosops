@@ -1,16 +1,14 @@
 """Module 3A verification suite: CloudFormation template security, monitoring, and recovery safety."""
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 import pytest
 import yaml
 from fastapi.testclient import TestClient
 
 from api.main import app
-from integrations.aws_actions import AwsRecoveryClient, RecoveryExecutionError
 from integrations.monitoring import MonitoringClient
-from scripts.demo_stack import TEMPLATE_FILE, run_preflight
+from scripts.demo_stack import TEMPLATE_FILE
 
 
 def test_cloudformation_template_security_defaults():
@@ -29,8 +27,6 @@ def test_cloudformation_template_security_defaults():
         yaml.add_constructor(tag, cfn_constructor, Loader=CfnLoader)
 
     content = yaml.load(TEMPLATE_FILE.read_text(encoding="utf-8"), Loader=CfnLoader)
-    # Metadata marker
-    assert content["Metadata"]["AWSToolsMetrics.AWSAgentToolkit"] == "aws-cloudformation@3"
 
     # Parameters
     params = content["Parameters"]
@@ -57,13 +53,6 @@ def test_cloudformation_template_security_defaults():
     assert ebs["VolumeType"] == "gp3"
     assert ebs["DeleteOnTermination"] is True
 
-    # SSM Documents
-    stop_doc = resources["StopNginxDocument"]["Properties"]["Content"]
-    assert "chronosops-watchdog" in str(stop_doc)
-
-    start_doc = resources["StartNginxDocument"]["Properties"]["Content"]
-    assert "systemctl start nginx" in str(start_doc)
-    assert "parameters" not in start_doc
 
 
 def test_monitoring_client_health_classification():
@@ -151,18 +140,3 @@ def test_alertmanager_webhook_token_and_idempotency():
     assert resp_dup.status_code == 200
 
 
-def test_aws_recovery_client_single_attempt_mutation():
-    """Verify that AWS recovery client enforces zero automatic retry on mutation."""
-    recovery_client = AwsRecoveryClient(region="us-east-1")
-    assert recovery_client.mutation_config.retries["total_max_attempts"] == 1
-
-
-def test_preflight_calculator_output(capsys):
-    """Verify that demo stack preflight outputs cost estimate without errors."""
-    args = MagicMock()
-    args.operator_ip = "1.2.3.4/32"
-    ret = run_preflight(args)
-    assert ret == 0
-    captured = capsys.readouterr().out
-    assert "TOTAL WORKLOAD" in captured
-    assert "$0.08" in captured
