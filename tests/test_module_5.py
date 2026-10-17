@@ -12,11 +12,12 @@ from falkordb import FalkorDB
 from agents.memory import (
     consolidate_incident,
     execute_learned_procedural_workflow,
-    get_memory_graph_name,
     get_tenant_db,
     is_workflow_learned,
     retrieve_tenant_memory,
 )
+from agents.settings import graph_names
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS_DIR = ROOT / "artifacts"
@@ -73,7 +74,7 @@ async def test_tenant_isolation_boundary():
     # 2. Direct restricted reader DB access denial
     globex_db = get_tenant_db("globex", admin=False)
     with pytest.raises(Exception) as exc_info:
-        globex_db.select_graph("agent_memory_acme").ro_query("RETURN 1")
+        globex_db.select_graph(graph_names().memory_for("acme")).ro_query("RETURN 1")
     err = str(exc_info.value).lower()
     assert "noperm" in err or "permission" in err
 
@@ -100,7 +101,7 @@ async def test_procedural_workflow_formation_after_three_successes():
 
     # Inspect NEXT_STEP graph structure
     admin_db = get_tenant_db("acme", admin=True)
-    graph = admin_db.select_graph("agent_memory_acme")
+    graph = admin_db.select_graph(graph_names().memory_for("acme"))
     edges = graph.ro_query(
         "MATCH (p:WorkflowStep)-[r:NEXT_STEP]->(c:WorkflowStep) "
         "WHERE p.workflow_id = $wf_id "
@@ -139,7 +140,7 @@ async def test_duplicate_consolidation_idempotency():
     await consolidate_incident(incident_id=inc_id, tenant_id="acme", outcome_data=outcome)
 
     admin_db = get_tenant_db("acme", admin=True)
-    graph = admin_db.select_graph("agent_memory_acme")
+    graph = admin_db.select_graph(graph_names().memory_for("acme"))
     count = graph.ro_query(
         "MATCH (ep:IncidentEpisode {incident_id: $id}) RETURN count(ep)",
         {"id": inc_id},
@@ -148,8 +149,8 @@ async def test_duplicate_consolidation_idempotency():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_consolidations_proof():
-    """Concurrency proof: dispatch 20 distinct incidents across tenants and measure p50/p95 latency."""
+async def test_concurrent_consolidations_proof(tmp_path):
+    """Record synthetic consolidation timings; overlapping-write proof is pending."""
     latencies: list[float] = []
 
     async def single_worker(worker_id: int, tenant: str):
@@ -184,7 +185,6 @@ async def test_concurrent_consolidations_proof():
     p95 = latencies[min(p95_idx, len(latencies) - 1)]
 
     # Record latency artifact
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     concurrency_artifact = {
         "total_operations": len(results),
         "tenants": ["acme", "globex"],
@@ -194,7 +194,7 @@ async def test_concurrent_consolidations_proof():
         "max_latency_ms": round(latencies[-1], 2),
         "measured_at": time.time(),
     }
-    (ARTIFACTS_DIR / "concurrency-module-5.json").write_text(
+    (tmp_path / "concurrency-module-5.json").write_text(
         json.dumps(concurrency_artifact, indent=2) + "\n", encoding="utf-8"
     )
 

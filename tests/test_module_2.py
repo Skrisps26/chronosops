@@ -5,6 +5,8 @@ import pytest
 
 from agents.tools import blast_radius, choke_points, failover_routes, who_owns
 from agents.mcp_client import FalkorDBMcpClient
+from agents.settings import graph_names
+
 
 
 @pytest.mark.asyncio
@@ -90,7 +92,7 @@ async def test_mcp_client_reader_cannot_write():
     client = FalkorDBMcpClient(tenant="acme")
     with pytest.raises(Exception) as exc_info:
         # Attempt a write query through read-only client
-        await client.query_readonly("ops_topology", "CREATE (:HackedNode {id: 1})")
+        await client.query_readonly(graph_names().topology, "CREATE (:HackedNode {id: 1})")
     err_str = "".join(traceback.format_exception(exc_info.value)).lower()
     assert "write" in err_str or "not allowed" in err_str or "noperm" in err_str or "permission" in err_str
 
@@ -100,6 +102,6 @@ async def test_tenant_cross_graph_access_denied():
     """Verify that tenant acme reader credentials cannot query globex private memory."""
     client = FalkorDBMcpClient(tenant="acme")
     with pytest.raises(Exception) as exc_info:
-        await client.query_readonly("agent_memory_globex", "RETURN 1")
+        await client.query_readonly(graph_names().memory_for("globex"), "RETURN 1")
     err_str = "".join(traceback.format_exception(exc_info.value)).lower()
     assert "permission" in err_str or "noperm" in err_str

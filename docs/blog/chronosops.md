@@ -3,6 +3,8 @@
 
 *An evidence-first technical breakdown of our entry for Graph Hacks 2026 by WeMakeDevs & FalkorDB.*
 
+**Draft under correctness repair.** Descriptions below include intended behavior that has not passed the live acceptance gates. Do not treat this draft as evidence of live EC2 recovery, Slack ingestion or learned-workflow completion; use [the repair ledger](../PROGRESS.md).
+
 ---
 
 ## The Vector Bottleneck in Agent Systems
@@ -124,27 +126,14 @@ ChronosOps maintains per-tenant memory graphs (`agent_memory_acme`, `agent_memor
 2. **Semantic Memory:** When the Premium Link route was rejected, ChronosOps merged a `SemanticFact` with a `[:BLOCKED_BY]` relationship. Future agent sessions retrieve active exclusion rules and suppress bad proposals automatically.
 3. **Procedural Memory (Zero-LLM Playbooks):** After 3 verified successful resolutions, ChronosOps created a `WorkflowSubgraph` with sequential `[:NEXT_STEP]` edges. Subsequent runs executed the entire investigation and approval pipeline with **0 LLM calls**, drastically reducing latency and token costs.
 
-### High-Concurrency Tenant Benchmarks
-We tested 20 concurrent cross-tenant consolidations across Acme and Globex. All 20 completed with zero leaks and atomic writes:
-- **p50 Latency:** 5.31 ms
-- **p95 Latency:** 7.15 ms
-- **Direct Cross-Tenant Read Attempt:** Denied by Redis ACL (`NOPERM`)
+### Concurrency verification pending
+The former concurrency claim is withdrawn: the coroutine workers performed synchronous database operations without yielding. Replacement verification must use overlapping clients and inspect persisted outcomes and tenant denial.
 
 ---
 
-## 4. Benchmark Evaluation: 100.0% Accuracy
+## 4. Evaluation verification pending
 
-To measure the advantage of graph context over flat vector chunk retrieval, we built a 24-question benchmark suite covering 4 core categories:
-
-| Category | Questions | Vector Baseline | ChronosOps (FalkorDB) | Latency p50 |
-|---|:---:|:---:|:---:|:---:|
-| **Ownership & Contributor** | 6 | 66.7% | **100.0%** (6/6) | 7.2s |
-| **Provenance & Updates** | 6 | 50.0% | **100.0%** (6/6) | 9.5s |
-| **Impact & Routes (SPpaths)**| 6 | 33.3% | **100.0%** (6/6) | 7.7s |
-| **Session Memory & Isolation**| 6 | 0.0% | **100.0%** (6/6) | 7.1s |
-| **OVERALL** | **24** | **37.5%** | **100.0% (24/24)** | **7.7s** |
-
-*Measured results recorded in `artifacts/eval.json`.*
+The previous graph/vector comparison and category latency table are withdrawn. The recorded evaluator executed graph-only checks, had automatic passing branches, and implemented no vector baseline. A fair paired evaluation must use the same authorized corpus, Bedrock models, embeddings and context budget, preserve raw misses/errors, and score citations and safety behavior. Results will be published only after that implementation is exercised.
 
 ---
 

@@ -10,6 +10,7 @@ from falkordb import FalkorDB
 from integrations.aws_actions import AwsRecoveryClient
 from integrations.monitoring import MonitoringClient
 from seed.load import get_config
+from agents.settings import graph_names
 
 
 class ActionConflictError(Exception):
@@ -36,7 +37,7 @@ async def approve_action(
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
 
     # 1. Fetch approval record
     cypher = """
@@ -122,6 +123,9 @@ async def approve_action(
         }
 
     # 3. Real execution branch
+    if config.get("REAL_RECOVERY_ENABLED", "false").lower() != "true":
+        raise ActionConflictError("Real recovery is disabled")
+
     instance_id = proposed.get("instance_id")
     doc_name = proposed.get("document_name")
 
@@ -187,7 +191,7 @@ async def reject_action(
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
     now_ts = datetime.now(timezone.utc).isoformat()
 
     graph.query(

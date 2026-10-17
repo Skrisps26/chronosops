@@ -2,7 +2,7 @@
 
 > **Incident intelligence platform powered by FalkorDB as the context layer for AI agents, integrating Amazon Bedrock and the official FalkorDB MCP Server.**
 
-ChronosOps is our submission for the **Graph Hacks 2026** hackathon (WeMakeDevs & FalkorDB). It enters and satisfies all three hackathon tracks in a unified, evidence-first incident story:
+ChronosOps targets all three **Graph Hacks 2026** tracks. Correctness repair is in progress; the live incident story and clean-clone gates are not yet verified. Real recovery is disabled by default.
 
 - **Track 01 (Agents That Act on Connected Data):** Autonomous blast radius computation, `algo.SPpaths` failover routing under cost caps, human-in-the-loop approval, and bounded AWS Systems Manager recovery.
 - **Track 02 (Agent Memory and Coordination):** Episodic recall across sessions without chat history, semantic blocked-route facts, zero-LLM procedural workflows (`NEXT_STEP`), and strict multi-tenant isolation.
@@ -10,19 +10,11 @@ ChronosOps is our submission for the **Graph Hacks 2026** hackathon (WeMakeDevs 
 
 ---
 
-## 🏆 Key Benchmark Results
+## Verification status
 
-We evaluated ChronosOps against a standard vector-only RAG baseline on a 24-question benchmark across 4 categories:
+The previous graph/vector accuracy comparison was unsupported and has been withdrawn. The old evaluator ran graph-only checks and automatically credited several questions; its output is not a generated-answer benchmark. The previous concurrency timings measured non-overlapping synchronous writes, not concurrent writers.
 
-| Category | Questions | Vector Baseline | ChronosOps (FalkorDB) | Latency p50 |
-|---|:---:|:---:|:---:|:---:|
-| **Ownership & Contributor** | 6 | 66.7% | **100.0%** (6/6) | 7.7s |
-| **Provenance & Updates** | 6 | 50.0% | **100.0%** (6/6) | 9.5s |
-| **Impact & Routes (SPpaths)**| 6 | 33.3% | **100.0%** (6/6) | 7.7s |
-| **Session Memory & Isolation**| 6 | 0.0% | **100.0%** (6/6) | 7.1s |
-| **OVERALL ACCURACY** | **24** | **37.5%** | **100.0% (24/24)** | **7.7s** |
-
-- **High-Concurrency Memory Writes:** 20 concurrent cross-tenant writes completed with **p50 = 5.31ms**, **p95 = 7.15ms**, and zero cross-tenant leakage.
+No comparative accuracy or category-latency numbers are published until paired raw graph/vector measurements and actual overlapping-write proof exist. See the finding-numbered repair ledger below.
 - **Full Architecture Spec:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Side Prize Blog Post:** See [docs/blog/chronosops.md](docs/blog/chronosops.md).
 - **Module Implementation Progress:** See [docs/PROGRESS.md](docs/PROGRESS.md).

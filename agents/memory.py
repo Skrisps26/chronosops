@@ -11,11 +11,12 @@ from typing import Any
 from falkordb import FalkorDB
 
 from seed.load import get_config
+from agents.settings import graph_names, require_tenant
 
 
 def get_tenant_db(tenant_id: str, admin: bool = False) -> Any:
     config = get_config()
-    tenant = tenant_id.lower()
+    tenant = require_tenant(tenant_id)
     upper = tenant.upper()
 
     if admin:
@@ -34,7 +35,7 @@ def get_tenant_db(tenant_id: str, admin: bool = False) -> Any:
 
 
 def get_memory_graph_name(tenant_id: str) -> str:
-    return f"agent_memory_{tenant_id.lower()}"
+    return graph_names().memory_for(tenant_id)
 
 
 async def consolidate_incident(
@@ -44,7 +45,7 @@ async def consolidate_incident(
 ) -> dict[str, Any]:
     """Consolidate completed incident into tenant's isolated episodic & semantic memory graph."""
     db_admin = get_tenant_db(tenant_id, admin=True)
-    ops_graph = db_admin.select_graph("ops_topology")
+    ops_graph = db_admin.select_graph(graph_names().topology)
     mem_graph_name = get_memory_graph_name(tenant_id)
     mem_graph = db_admin.select_graph(mem_graph_name)
 

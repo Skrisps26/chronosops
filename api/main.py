@@ -22,6 +22,7 @@ from agents.memory import consolidate_incident, retrieve_tenant_memory
 from agents.remediation import remediation_node
 from agents.triage import triage_node
 from agents.workflow import IncidentState, create_incident_workflow
+from agents.settings import graph_names
 from api.contracts import (
     ApprovalRequest,
     EventEnvelope,
@@ -84,7 +85,7 @@ async def readyz() -> dict[str, Any]:
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
     try:
-        res = db.select_graph("ops_topology").ro_query("MATCH (m:Meta {id: 'ops_topology_meta'}) RETURN m.ready").result_set
+        res = db.select_graph(graph_names().topology).ro_query("MATCH (m:Meta {id: 'ops_topology_meta'}) RETURN m.ready").result_set
         ready = bool(res and res[0][0] is True)
         return {"status": "ready" if ready else "not_ready", "ready": ready}
     except Exception as e:
@@ -119,7 +120,7 @@ async def get_topology_for_visualization(
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
 
     # Fetch nodes
     node_rows = graph.ro_query(
@@ -290,7 +291,7 @@ async def list_incidents(
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
     rows = graph.ro_query(
         "MATCH (i:Incident) RETURN i.incident_id, i.service_id, i.status, i.starts_at ORDER BY i.starts_at DESC LIMIT 20"
     ).result_set
@@ -321,7 +322,7 @@ async def get_incident(
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
     rows = graph.ro_query(
         "MATCH (a:ApprovalRecord {incident_id: $id, tenant_id: $tenant}) "
         "RETURN a.approval_id, a.service_id, a.action_kind, a.status, a.proposed_action, a.expires_at",
@@ -420,7 +421,7 @@ async def receive_alert(
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
     now_ts = datetime.now(timezone.utc).isoformat()
 
     recorded = []

@@ -11,6 +11,7 @@ from falkordb import FalkorDB
 
 from agents.workflow import IncidentState
 from seed.load import get_config
+from agents.settings import graph_names
 
 
 def compute_evidence_hash(evidence: dict[str, Any], proposed: dict[str, Any]) -> str:
@@ -65,7 +66,7 @@ async def governance_node(state: IncidentState) -> dict[str, Any]:
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
 
     graph.query(
         "MERGE (a:ApprovalRecord {approval_id: $approval_id}) "

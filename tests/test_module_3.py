@@ -81,6 +81,7 @@ async def test_nonexistent_service_returns_not_found():
     assert (await decision_provenance("unknown-service-abc")).status == "NOT_FOUND"
 
 
+@pytest.mark.bedrock_live
 @pytest.mark.asyncio
 async def test_document_update_replaces_evidence_and_preserves_unrelated():
     """Verify that updating a document updates citation text and preserves unrelated entities."""

@@ -14,9 +14,10 @@ from agents.schemas import (
     ToolTrace,
 )
 from agents.mcp_client import FalkorDBMcpClient
+from agents.settings import graph_names
 
-OPS_GRAPH = "ops_topology"
-BRAIN_GRAPH = "company_brain"
+OPS_GRAPH = graph_names().topology
+BRAIN_GRAPH = graph_names().company
 
 
 async def check_topology_ready(client: FalkorDBMcpClient) -> bool:

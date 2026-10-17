@@ -2,32 +2,18 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-import networkx as nx
-import pytest
 from falkordb import FalkorDB
 
-from seed.generate import MANIFEST_FILE, compute_hash, generate_data
+import networkx as nx
+
+from agents.settings import graph_names
+from seed.generate import MANIFEST_FILE
 from seed.load import get_config, is_graph_ready, load_topology
 
-TEST_GRAPH = "test_ops_topology_mod1"
+TEST_GRAPH = graph_names().topology
 
 
-@pytest.fixture(scope="module", autouse=True)
-def cleanup_test_graph():
-    config = get_config()
-    db = FalkorDB(
-        host=config["FALKORDB_HOST"],
-        port=int(config["FALKORDB_PORT"]),
-        username=config["FALKORDB_ADMIN_USERNAME"],
-        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
-    )
-    yield
-    try:
-        db.select_graph(TEST_GRAPH).delete()
-    except Exception:
-        pass
 
 
 def test_manifest_reproducibility():

@@ -1,154 +1,66 @@
-# Implementation progress
+# Correctness repair ledger
 
-## Gate policy
+The previous all-modules-passed report is withdrawn. Code presence, mocked adapters and a simulation manifest do not establish the live acceptance gates in PLAN.md. Real recovery is disabled by default while repairs proceed. No graph/vector comparative scores or concurrent-write benchmark are currently verified.
 
-Execute PLAN.md modules in order. A module passes only after its required live scenarios pass; unit tests alone, mocks and replay do not satisfy a live gate. Later modules have not started.
+## Historical evidence
 
-## Module 0 — Passed
+Earlier dependency probes exercised local FalkorDB, official MCP and Bedrock SDK paths; those historical observations do not establish the complete incident product. Archived `AWS_PROFILE=sai AWS_REGION=us-east-1 uv run --frozen pytest -v tests/` runs timed out (240 seconds, including a webhook failure). A subsequent 180-second graph/workflow subset also timed out. Neither proves a complete 57/57 pass. The historical graph-only evaluation automatically credited four questions and did not run a vector baseline. The old concurrency test did not overlap its synchronous database work.
 
-Completed observations:
+Keep historical artifacts labeled historical/unverified; never promote them to real training evidence.
 
-| Check | Observed result |
-| --- | --- |
-| Approved artifacts | agents.md and PLAN.md copied byte-for-byte from approved artifacts; SHA-256 identities matched. AGENTS.md links to agents.md. |
-| GitHub | Public repository https://github.com/Skrisps26/chronosops created; initial docs commit 3a3b5cf pushed to main; feat/module-0 verified and ready for merge. |
-| Local runtime | Docker command absent. Rootless Podman reports true. Pinned FalkorDB 4.22.1 image started with persistent data volume and AOF everysec. |
-| AWS profile | Existing sai profile found; AWS login session renewed with user approval. Boto3 configured with botocore[crt] to support login session credentials. |
-| AWS MCP | Official signed library connection executed aws___run_script → STS GetCallerIdentity successfully; api_calls evidence saved in ignored artifacts/aws-mcp.json. |
-| Model catalog | AWS MCP ListFoundationModels and ListInferenceProfiles in us-east-1 returned ACTIVE Nova Lite US inference profile and Titan Embeddings V2. |
-| Live Bedrock | Real Nova Lite Converse API call passed (text received, tool called). Titan Embeddings V2 passed with verified 256-dimension normalized output. |
-| Database & ACLs | Admin PING passed; GRAPH.RO_QUERY write rejection passed; literal and parameterized LIMIT/SKIP verified; SPpaths and betweenness algorithms executed on fixture. Tenant ACL isolation passed (acme write denied, cross-tenant reads denied). |
-| Official MCP | Installed `@falkordb/mcpserver@1.3.0` ran stdio session; verified 7 tools including query_graph_readonly and query_graph; write attempt under reader credentials rejected. |
-| GraphRAG SDK | Pinned official repository commit `35e67a0b27fdcc7f2c28508b09e86169851a8187` exposing required `enable_cypher=False`. Exercised live ontology, ingestion, update, and Document-to-Chunk citation path using Bedrock LLMExtractor. |
-| Integration probe | `scripts/probe.py` executed live with exit code 0; all 11 required live checks passed (`required_live_checks_passed: true` in `artifacts/probe.json`). |
-| Behavior tests | `pytest -q tests/test_module_0.py` passed (2/2). |
+## Findings and acceptance
 
-## Module 1 — Passed
+| Finding | Required behavior | Repair status | Required proof |
+| --- | --- | --- | --- |
+| 1 | Fresh complete evidence at proposal and approval | Open | Missing/changed/deleted evidence refuses with no command |
+| 2 | Atomic approval and singleton real execution claim | Open | Twenty competing clients submit once |
+| 3 | Correct endpoint and fresh post-command samples | Open | Three distinct saved healthy samples after completion |
+| 4 | Immediate CommandId persistence and unknown reconciliation | Open | Submission/poll/crash outcomes never auto-resend |
+| 5 | Proxy-authenticated tenant identity | Open | No default identity or forged direct request |
+| 6 | Tenant-authorized events and incident reads | Open | Foreign API/socket payloads denied |
+| 7 | Missing reader credentials fail closed | Open | No administrator fallback |
+| 8 | Monitoring/Slack/action/memory lifecycle connected | Open | Actual controlled incident, source update, outcome and recall |
+| 9 | Grounded triage/proposal and truthful explanation | Open | Tool/evidence failure abstains |
+| 10 | Only authoritative compatible outcomes train memory | Open | Invalid outcomes excluded; compatible three-success boundary |
+| 11 | Stored NEXT_STEP graph controls learned execution | Open | Missing/cyclic/incompatible workflow refuses |
+| 12 | Current versioned citations and contributor provenance | Open | Edit/delete/author change and failure publication checks |
+| 13 | Actual paired evaluation and overlapping concurrency | Open | Raw measured outputs; no automatic question credit |
+| 14 | Complete local stack and truthful failing demos | Open | Clean clone, authenticated browser/tunnel and negative demo exit |
+| 15 | Explicit API errors and truthful live UI | Open | Unknown404, unready503, rejected approval retained |
+| 16 | Canonical SDK structured ingestion precedes extraction | Open | Idempotent CSV ingestion and alias collision refusal |
+| 17 | Exact deployment binding and separate runtime IAM | Open | Allowed fixed start; denied arbitrary/foreign/operator actions |
+| 18 | Dedicated EC2 monitoring and generated webhook secret | Open | Correct endpoint, stale/exporter failure unknown |
+| 19 | Tests cannot alter demo state or learn from shared history | Local gate passed; image-build proof blocked | Isolated DB volumes/ACL/namespace exercised; default suite 52 passed, 2 live tests deselected |
 
-Completed observations:
+## Step gates
 
-| Check | Observed result |
-| --- | --- |
-| Seed generation | `seed/generate.py` generated deterministic manifest `5bb0dc7e3654` with 45 services (8 scenario, 37 filler), 102 dependencies, 5 routes, 16 documents (4 RFCs, 4 Slack threads, 4 tickets, 4 PRs), 12 people, 4 teams, 4 aliases. |
-| NetworkX oracle | Independent NetworkX ancestor traversal confirmed failure of `payments-primary` reaches exactly `["checkout", "gateway", "orders", "worker"]`. Disconnected filler services have zero paths into scenario services. |
-| Idempotent loader | `seed/load.py` loads `ops_topology` with parameterized UNWIND batches (<=300). Twice-loaded counts strictly identical (45 services, 102 dependencies, 5 routes). |
-| Failure semantics | `:Meta {ready: false}` set during load; updated to `ready: true` only after count validation passes. Interrupted load verified to leave `is_graph_ready == False`. |
-| Behavior tests | `pytest -q tests/test_module_1.py` passed (4/4). Cumulative test suite passed (6/6). |
+1. Disarm recovery, isolate tests, correct unsupported claims — local gate passed. Changes: default-off real-action guard; server-owned test graph namespace; isolated Compose/ACL fixtures; unsupported public benchmark claims withdrawn. Test latency artifacts now use pytest temporary directories, not historical demo artifacts.
+2. Proxy identity and tenant authorization — pending.
+3. Verified deployment and runtime permissions — pending.
+4. Fresh monitoring evidence and outage identity — pending.
+5. Canonical ingestion and citation publication — pending.
+6. Slack lifecycle and notifications — pending.
+7. Evidence-bound proposals and routes — pending.
+8. Atomic execution and command state machine — pending.
+9. Authoritative episodic/procedural memory — pending.
+10. Bounded investigation and controlled recovery — pending.
+11. Complete stack and truthful UI — pending.
+12. Paired evaluation and actual concurrency — pending.
+13. Real chapters, recording and final acceptance — pending.
 
-## Module 2 — Passed
+### Step 1 commands and observations
 
-Completed observations:
+- `./scripts/bootstrap-local.sh -p chronosops-test -f docker-compose.yml -f docker-compose.test.yml config` succeeded with no inherited live env files or host ports.
+- `./scripts/bootstrap-local.sh -p chronosops-test -f docker-compose.yml -f docker-compose.test.yml build db tests` built the DB, but the application image pull timed out after 1800 seconds with Docker Hub connection-reset/TLS errors. A separate official Python slim-manifest lookup timed out after 60 seconds. Container-image packaging remains unverified, not passed.
+- `./scripts/bootstrap-local.sh -p chronosops-test -f docker-compose.yml -f docker-compose.test.yml up -d db` started only the isolated DB.
+- `podman inspect --format '{{json .NetworkSettings.Ports}} {{json .Mounts}}' chronosops-test_db_1` showed no host port publication and only `chronosops-test_falkordb-test-data` / `chronosops-test_falkordb-test-acl` volumes.
+- Fallback uses the installed Python environment inside only that container's network namespace: `podman unshare nsenter -t <isolated DB PID from podman inspect> -n -- /home/skrisps/falkor/.venv/bin/python -m pytest -q`, with the dummy DB/AWS environment from docker-compose.test.yml, `FALKORDB_HOST=127.0.0.1`, nonexistent AWS config/credential paths and no profile. Result: **52 passed, 2 live tests deselected, 1 upstream SDK deprecation warning in 269.03s**. Initial run exposed boto3 treating empty AWS_PROFILE as a named profile; conftest now normalizes that empty test setting before imports.
+- Focused disabled-recovery regression: same namespace invocation with `pytest -q tests/test_module_4.py -k real_recovery_disabled` — **1 passed, 6 deselected**. Actual function smoke printed `REAL_ACTION_REFUSAL Real recovery is disabled`; no recovery adapter was constructed.
+- Focused temporary-artifact check: `pytest -q tests/test_module_5.py -k concurrent` — **1 passed, 4 deselected**. This remains synthetic serial timing coverage, not the future overlapping-writer proof.
+- Actual reader smoke caught the SDK `NoPermissionError` for Globex reading Acme; isolated names were `test_suite_ops_topology` and `test_suite_company_brain`.
+- Read-only demo-count capture could not connect to the stopped demo DB at loopback6379. It was not started for tests. Separation was verified through distinct container volumes, namespace and DB ACLs; unchanged live counts are not claimed.
 
-| Check | Observed result |
-| --- | --- |
-| Official MCP client | `agents/mcp_client.py` connects to `@falkordb/mcpserver` via stdio; enforces read-only mode, measures duration_ms, redacts credentials from traces. |
-| Typed graph tools | `agents/tools.py` implements `blast_radius`, `failover_routes`, `choke_points`, `who_owns`, `bus_factor`, `decision_provenance` returning typed `ToolResult`. |
-| Blast radius | `blast_radius("payments-primary")` returned exact affected services `["checkout", "gateway", "orders", "worker"]` (count=4), with witness chains and depth frontier check (depth 6 unhit). Unknown service returns `NOT_FOUND`. |
-| Failover routes | `failover_routes("checkout", "payments-backup", max_cost=12)` rejected 20-cost premium route and selected 8-cost queue route (latency 5ms). Below budget (cap 5) returned `NO_SAFE_ROUTE` with all candidates rejected. |
-| Choke points | `choke_points()` executed sampled betweenness centrality (`algo.betweenness`, seed=42) and returned top dependency connectors. |
-| Safety boundaries | Injection syntax rejected by Pydantic before queries; write query via reader client rejected; tenant `acme` cannot access `agent_memory_globex` (NOPERM); unready knowledge tools return `NOT_READY`. |
-| Behavior tests | `pytest -q tests/test_module_2.py` passed (9/9). Cumulative test suite passed (15/15). |
 
-## Module 3 — Passed
+## Live prerequisite policy
 
-Completed observations:
-
-| Check | Observed result |
-| --- | --- |
-| Company Brain ontology | `seed/ontology.py` defines 7 entities (Service, Person, Team, Decision, Ticket, PullRequest, SlackThread), 5 typed relations, and 3 structured table mappings. |
-| Knowledge ingestion | `seed/ingest.py` ingests all 16 markdown documents and structured CSV tables into FalkorDB `company_brain`. Verified 16 documents and 16 chunks with Bedrock `LLMExtractor`. |
-| Canonical alias resolution | `resolve_service_id` correctly resolves multiple aliases (`"Payments API"`, `"pay-api"`) and exact names to canonical `"payments-primary"`. |
-| Ownership & bus factor | `who_owns("payments-primary")` returned team Payments and lead members including Alice Chen. `bus_factor("payments-primary")` computed exact proxy 1 and flagged `bus_factor_warning: True` with Alice Chen as sole primary contributor. |
-| Decision provenance | `decision_provenance("payments-primary")` traced decisions to cited RFCs and Slack threads, returning exact chunk IDs and excerpts via GraphRAG `MENTIONED_IN` provenance. |
-| Single-file update | `update_company_document("rfc-001-payments-failover", ...)` replaced chunk text with updated rationale ("rollback speed") and preserved unrelated entities (`checkout` and Carol Danvers). Original fixture restored after test. |
-| Behavior tests | `pytest -q tests/test_module_3.py` passed (7/7). Cumulative test suite passed (22/22). |
-
-## Module 3A — Passed
-
-Completed observations:
-
-| Check | Observed result |
-| --- | --- |
-| CloudFormation template | `infra/demo.yaml` defines disposable `t4g.micro` workload in dedicated VPC with required IMDSv2, encrypted gp3 EBS, least-privilege SG (/32 ingress only, no 0.0.0.0/0), and `aws-cloudformation@3` context metadata. |
-| Fixed SSM documents | `${StackName}-StopNginx` implements 10-minute systemd watchdog timer before stopping nginx; `${StackName}-StartNginx` implements parameterless start and watchdog cancellation. |
-| Preflight cost calculator | `scripts/demo_stack.py preflight` auto-discovers external `/32` IP and computes deterministic 6-hour rehearsal estimate ($0.081 total). |
-| AWS recovery client | `integrations/aws_actions.py` configures single-attempt mutation (`total_max_attempts=1`) to prevent duplicate commands; polls `GetCommandInvocation` with exponential backoff. |
-| Monitoring & alerting | `integrations/monitoring.py` evaluates Prometheus blackbox health and classifies stale probes (>15s) and absent targets as `monitoring_unknown`. `api/main.py` provides bearer-token authenticated `/internal/alerts` Alertmanager webhook with idempotent incident recording. |
-| Behavior tests | `pytest -q tests/test_module_3a.py` passed (5/5). Cumulative test suite passed (27/27). |
-
-## Module 3B — Passed
-
-Completed observations:
-
-| Check | Observed result |
-| --- | --- |
-| Slack manifest | `slack/manifest.yaml` requests exact least-privilege bot scopes (`channels:history`, `chat:write`) and Socket Mode (`connections:write`); omits `chat:write.public` and `channels:join`. |
-| Preflight validator | `scripts/slack_preflight.py` validates `xoxb-`, `xapp-`, and `C-` channel ID formats, tests `auth.test`, and verifies channel membership and history reading. |
-| Connector & safety | `integrations/slack.py` enforces channel allowlisting, prevents bot loops (`bot_id`, `subtype=bot_message`, self-user), and normalizes collision-free document IDs (`slack:<team>:<channel>:<ts>`). |
-| Inbox idempotency | `is_event_processed` and `record_processed_event` ensure duplicate Slack `event_id` deliveries do not duplicate knowledge graph facts. |
-| Incident dispatch | `post_incident_root` dispatches warning notice with console link; `post_incident_outcome` posts threaded verification reply. |
-| Behavior tests | `pytest -q tests/test_module_3b.py` passed (6/6). Cumulative test suite passed (33/33). |
-
-## Module 4 — Passed
-
-Completed observations:
-
-| Check | Observed result |
-| --- | --- |
-| LangGraph workflow | `agents/workflow.py` defines linear lifecycle StateGraph (`triage` -> `remediation` -> `governance`) with typed `IncidentState`. |
-| Triage & remediation | `agents/triage.py` evaluates blast radius and ownership. `agents/remediation.py` plans safe alternative for simulation (queue route) and cites operational policy for real mode (`restart_service`). |
-| Governance & approvals | `agents/governance.py` enforces policy rules, calculates evidence hashes, and generates server-side `ApprovalRecord` with 5-minute expiry in `ops_topology`. |
-| Execution handlers | `agents/actions.py` implements `approve_action` and `reject_action`. Simulation merges `:TrafficState` and records `applied`. Re-approval returns `already_completed: True` (idempotent). |
-| Cross-tenant & expiry safety | Unauthorized tenant (`globex`) attempting to approve `acme` incident raises `ActionNotFoundError` (no leak). Expired proposal (>5m) raises `ActionConflictError`. |
-| Behavior tests | `pytest -q tests/test_module_4.py` passed (6/6). Cumulative test suite passed (39/39). |
-
-## Module 5 — Passed
-
-Completed observations:
-
-| Check | Observed result |
-| --- | --- |
-| Episodic & semantic memory | `agents/memory.py` consolidates completed incidents into isolated `agent_memory_{tenant}` graph with `IncidentEpisode`, `DecisionLog`, `ServiceRef`, and `SemanticFact` (blocked route exclusions). |
-| Fresh session recall | `retrieve_tenant_memory` recalls historical episodes and active blocked routes in a fresh session with zero prior conversation history. |
-| Tenant isolation | Globex cannot observe Acme episodes (`test_tenant_isolation_boundary`). Restricted Globex reader connection to `agent_memory_acme` raises `NOPERM`. |
-| Procedural workflow | Consolidating 3 successful incidents creates a `WorkflowSubgraph` with sequential `WorkflowStep` nodes connected by `NEXT_STEP` edges. |
-| Zero-LLM execution | `execute_learned_procedural_workflow` runs deterministic playbook without LLM calls (`llm_calls_made == 0`), while strictly enforcing current safety checks and human approval. |
-| Concurrency proof | 20 concurrent cross-tenant consolidations completed without errors or leaks; p50 latency = 5.31ms, p95 = 7.15ms recorded in `artifacts/concurrency-module-5.json`. |
-| Behavior tests | `pytest -q tests/test_module_5.py` passed (5/5). Cumulative test suite passed (44/44). |
-
-## Module 6 — Passed
-
-Completed observations:
-
-| Check | Observed result |
-| --- | --- |
-| API contracts | `api/contracts.py` defines typed Pydantic models, tenant extraction headers (`X-Tenant-ID`), origin header validator, and real-time WebSocket connection manager. |
-| REST endpoints | `api/main.py` provides `/healthz`, `/readyz`, `/api/monitoring`, `/api/topology`, `/api/questions`, `/api/incidents`, `/api/sources/{id}`, and `/internal/alerts`. |
-| WebSocket streaming | `/api/runs/{id}/events` streams typed `EventEnvelope` events (`run_started`, `proposal_ready`, etc.) to subscribed frontend clients. |
-| Operator UI | Built with React, TypeScript, and Cytoscape.js into `ui/dist`; provides 3-column operator console, interactive topology highlighting, cited sources viewer, pending approval box, and collapsible trace drawer. |
-| Reverse proxy | `proxy/nginx.conf` and `proxy/Dockerfile` map basic auth for `acme` and `globex`, block external `/internal/` access, and proxy WebSockets. |
-| Behavior tests | `pytest -q tests/test_module_6.py` passed (9/9). Cumulative test suite passed (53/53). |
-
-## Module 7 — Passed
-
-Completed observations:
-
-| Check | Observed result |
-| --- | --- |
-| Fixed question corpus | `tests/fixtures/eval_questions.json` defines 24 fixed benchmark questions across 4 categories (ownership, provenance, impact, session memory). |
-| Evaluation suite | `tests/eval_suite.py` executes all 24 questions, evaluates structured fields, ground truth entities, and safety refusals, recording p50/p95 latency and raw outputs in `artifacts/eval.json`. |
-| Benchmark results | Overall Accuracy: **100.0% (24/24)**. Ownership: 6/6 (100.0%), Provenance & Update: 6/6 (100.0%), Impact & Routes: 6/6 (100.0%), Session Memory & Isolation: 6/6 (100.0%). Latency p50 = 7743ms, p95 = 13004ms. |
-
-## Module 8 — Passed
-
-Completed observations:
-
-| Check | Observed result |
-| --- | --- |
-| Operational scripts | `scripts/up.sh`, `scripts/seed.sh`, `scripts/demo.sh`, `scripts/tunnel.sh` created and verified executable. |
-| Architecture spec | `docs/ARCHITECTURE.md` comprehensively documents the multigraph model, MCP security architecture, algorithm execution, memory hierarchy, and sequence diagrams. |
-| Side prize blog post | `docs/blog/chronosops.md` details "Why AI Agents Need Graphs, Not Flat Vector Chunks", featuring the 100.0% evaluation table, raw Cypher queries, and high-concurrency benchmarks for the AirPods 5 competition. |
-| Three-track demo | `./scripts/demo.sh --mode simulation` ran end-to-end through all three chapters (Company Brain, Agents That Act, Agent Memory); verified and generated `artifacts/track-demo.json`. |
-| Behavior tests | `pytest -q tests/test_module_8.py` passed (4/4). Full test suite passed (57/57). |
-
-Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).
+AWS/model access, exact workload ownership, restricted recovery role, Slack installation/channel, public tunnel and publishing access must be discovered and verified during the corresponding steps. No current-access claim is inferred from old artifacts. Missing access blocks its live proof, not independent local implementation. No AWS workload mutation is part of an automated default test. Never mark a blocked live proof passed.

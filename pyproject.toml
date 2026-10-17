@@ -50,3 +50,9 @@ torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-m 'not bedrock_live and not live_demo'"
+markers = [
+    "bedrock_live: requires explicit Bedrock SDK credentials and model access",
+    "integration: exercises the isolated FalkorDB integration environment",
+    "live_demo: requires external live demonstration prerequisites",
+]

@@ -1,0 +1,72 @@
+# This override is intentionally used with docker-compose.yml. `!reset` is the
+# Compose-spec reset tag: it removes the base live secret files, publications,
+# and volumes rather than appending to them.
+name: chronosops-test
+
+x-test-environment: &test-environment
+  CHRONOSOPS_GRAPH_PREFIX: test_suite_
+  FALKORDB_HOST: db
+  FALKORDB_PORT: "6379"
+  FALKORDB_ADMIN_USERNAME: admin
+  FALKORDB_ADMIN_PASSWORD: chronosops_test_admin_only
+  FALKORDB_READER_ACME_USERNAME: reader_acme
+  FALKORDB_READER_ACME_PASSWORD: chronosops_test_reader_acme_only
+  FALKORDB_READER_GLOBEX_USERNAME: reader_globex
+  FALKORDB_READER_GLOBEX_PASSWORD: chronosops_test_reader_globex_only
+  FALKORDB_WRITER_ACME_USERNAME: writer_acme
+  FALKORDB_WRITER_ACME_PASSWORD: chronosops_test_writer_acme_only
+  FALKORDB_WRITER_GLOBEX_USERNAME: writer_globex
+  FALKORDB_WRITER_GLOBEX_PASSWORD: chronosops_test_writer_globex_only
+  FALKORDB_QUERY_TIMEOUT_MS: "3000"
+  REAL_RECOVERY_ENABLED: "false"
+  AWS_ACCESS_KEY_ID: testing
+  AWS_SECRET_ACCESS_KEY: testing
+  AWS_EC2_METADATA_DISABLED: "true"
+  AWS_REGION: us-east-1
+  AWS_REGION_NAME: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_PROFILE: ""
+  AWS_SHARED_CREDENTIALS_FILE: ""
+  AWS_CONFIG_FILE: ""
+  SLACK_TEAM_ID: ""
+  SLACK_CHANNEL_ID: ""
+  SLACK_BOT_TOKEN: ""
+  SLACK_APP_TOKEN: ""
+
+services:
+  db:
+    env_file: !reset []
+    environment: *test-environment
+    ports: !reset []
+    volumes: !override
+      - falkordb-test-data:/var/lib/falkordb/data
+      - falkordb-test-acl:/var/lib/falkordb/acl
+    restart: "no"
+
+  # Keep the inherited service safe if an operator targets it while inspecting
+  # this project; normal test runs target only the tests service below.
+  app:
+    env_file: !reset []
+    environment: *test-environment
+    ports: !reset []
+    profiles: [manual]
+    restart: "no"
+
+  tests:
+    build:
+      context: .
+    command: [pytest, -q]
+    environment: *test-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    init: true
+    restart: "no"
+
+networks:
+  default:
+    internal: true
+
+volumes:
+  falkordb-test-data:
+  falkordb-test-acl:

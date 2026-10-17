@@ -9,8 +9,9 @@ from agents.schemas import ToolBounds, ToolResult, ToolTrace
 from agents.mcp_client import FalkorDBMcpClient
 from seed.ingest import get_config, get_providers
 from seed.ontology import get_company_ontology
+from agents.settings import graph_names
 
-BRAIN_GRAPH = "company_brain"
+BRAIN_GRAPH = graph_names().company
 
 
 async def check_brain_ready(client: FalkorDBMcpClient) -> bool:
@@ -248,9 +249,10 @@ async def decision_provenance(service_id: str, tenant: str = "acme") -> ToolResu
 async def update_company_document(
     document_id: str,
     new_text: str,
-    graph_name: str = "company_brain",
+    graph_name: str | None = None,
 ) -> dict[str, Any]:
     """Execute live document update: replace text, re-extract, and re-finalize."""
+    graph_name = graph_name or graph_names().company
     config = get_config()
     llm, embedder = get_providers(config)
     ontology = get_company_ontology()

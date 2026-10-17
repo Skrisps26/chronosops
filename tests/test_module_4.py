@@ -16,6 +16,8 @@ from agents.governance import governance_node
 from agents.remediation import remediation_node
 from agents.triage import triage_node
 from agents.workflow import IncidentState, create_incident_workflow
+from agents.settings import graph_names
+
 from seed.load import get_config
 
 
@@ -70,7 +72,7 @@ async def test_simulation_workflow_end_to_end(workflow_app):
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
     rows = graph.ro_query(
         "MATCH (ts:TrafficState {incident_id: $id}) RETURN ts.active_route, ts.action",
         {"id": inc_id},
@@ -109,6 +111,7 @@ async def test_simulation_workflow_budget_rejection(workflow_app):
     assert len(state.rejected_routes) >= 2
 
 
+@pytest.mark.live_demo
 @pytest.mark.asyncio
 async def test_real_workflow_proposal_and_governance(workflow_app):
     """Verify real execution mode gathers ownership + Slack notice and proposes restart_service."""
@@ -162,7 +165,7 @@ async def test_expired_approval_rejection():
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
 
     appr_id = f"appr-exp-{uuid.uuid4().hex[:8]}"
     past_time = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
@@ -196,7 +199,7 @@ async def test_rejection_action():
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
-    graph = db.select_graph("ops_topology")
+    graph = db.select_graph(graph_names().topology)
 
     appr_id = f"appr-rej-{uuid.uuid4().hex[:8]}"
     graph.query(
@@ -219,3 +222,44 @@ async def test_rejection_action():
         {"id": appr_id},
     ).result_set[0][0]
     assert status == "rejected"
+
+@pytest.mark.asyncio
+async def test_real_recovery_disabled_never_invokes_fake_adapter(monkeypatch):
+    """A real isolated approval must stop at the server-owned recovery kill switch."""
+    config = get_config()
+    db = FalkorDB(
+        host=config["FALKORDB_HOST"],
+        port=int(config["FALKORDB_PORT"]),
+        username=config["FALKORDB_ADMIN_USERNAME"],
+        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
+    )
+    graph = db.select_graph(graph_names().topology)
+    approval_id = f"appr-real-disabled-{uuid.uuid4().hex[:8]}"
+    graph.query(
+        "MERGE (a:ApprovalRecord {approval_id: $approval_id}) "
+        "SET a.incident_id = 'inc-real-disabled', "
+        "    a.tenant_id = 'acme', "
+        "    a.execution_mode = 'real', "
+        "    a.action_kind = 'restart_service', "
+        "    a.status = 'pending', "
+        "    a.proposed_action = '{\"instance_id\":\"i-test\",\"document_name\":\"ChronosOps-StartNginx\"}'",
+        {"approval_id": approval_id},
+    )
+
+    created = False
+
+    class FakeRecoveryAdapter:
+        def __init__(self) -> None:
+            nonlocal created
+            created = True
+
+    monkeypatch.setenv("REAL_RECOVERY_ENABLED", "false")
+    monkeypatch.setattr("agents.actions.AwsRecoveryClient", FakeRecoveryAdapter)
+
+    with pytest.raises(ActionConflictError, match="disabled"):
+        await approve_action(
+            incident_id="inc-real-disabled",
+            approval_id=approval_id,
+            tenant_id="acme",
+        )
+    assert created is False
