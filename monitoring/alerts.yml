@@ -2,11 +2,22 @@ groups:
   - name: chronosops_demo_alerts
     rules:
       - alert: ChronosOpsDemoHttpDown
-        expr: probe_success == 0
+        expr: probe_success{job="chronosops_workload",service="payments-primary",tenant_id="acme",deployment_id=~".+",probe_module="http_2xx"} == 0
         for: 15s
         labels:
           severity: critical
-          service: payments-primary
         annotations:
           summary: "Payments primary service HTTP probe failed"
-          description: "Blackbox probe on {{ $labels.instance }} returned success=0 for 15s"
+          description: "Blackbox probe for {{ $labels.deployment_id }} on {{ $labels.instance }} returned success=0 for 15s"
+      - alert: ChronosOpsMonitoringUnknown
+        expr: |
+          up{job="chronosops_workload",service="payments-primary",tenant_id="acme",deployment_id=~".+"} == 0
+          or absent_over_time(up{job="chronosops_workload",service="payments-primary",tenant_id="acme",deployment_id=~".+"}[15s])
+          or absent_over_time(probe_success{job="chronosops_workload",service="payments-primary",tenant_id="acme",deployment_id=~".+",probe_module="http_2xx"}[15s])
+        for: 15s
+        labels:
+          severity: warning
+          evidence_state: monitoring_unknown
+        annotations:
+          summary: "ChronosOps workload monitoring evidence is unavailable"
+          description: "Prometheus cannot obtain current exporter or blackbox evidence for the configured workload"

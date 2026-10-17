@@ -14,4 +14,4 @@ receivers:
       - url: "http://app:8000/internal/alerts"
         send_resolved: true
         http_config:
-          bearer_token: "demo-internal-alert-secret"
+          bearer_token_file: "/run/secrets/chronosops-alert-token"

@@ -9,3 +9,4 @@ mcp/node_modules
 ui/node_modules
 artifacts
 data
+monitoring/targets

@@ -22,6 +22,7 @@ ui/dist/
 artifacts/
 data/
 *.log
+monitoring/targets/
 
 # Editor and OS files
 .DS_Store

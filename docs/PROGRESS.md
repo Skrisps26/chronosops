@@ -37,7 +37,7 @@ Keep historical artifacts labeled historical/unverified; never promote them to r
 1. Disarm recovery, isolate tests, correct unsupported claims — local gate passed. Changes: default-off real-action guard; server-owned test graph namespace; isolated Compose/ACL fixtures; unsupported public benchmark claims withdrawn. Test latency artifacts now use pytest temporary directories, not historical demo artifacts.
 2. Proxy identity and tenant authorization — local gate passed. Real Nginx HTTP/WebSocket smoke and containerized isolated cumulative suite exercised; public tunnel proof remains a later gate.
 3. Verified deployment and runtime permissions — local gate passed; live gate blocked by organization SCP. No real recovery permitted.
-4. Fresh monitoring evidence and outage identity — pending.
+4. Fresh monitoring evidence and outage identity — local gate passed. Real workload proof remains blocked with deployment.
 5. Canonical ingestion and citation publication — pending.
 6. Slack lifecycle and notifications — pending.
 7. Evidence-bound proposals and routes — pending.
@@ -82,6 +82,17 @@ Keep historical artifacts labeled historical/unverified; never promote them to r
 - Actual function smoke published and reread a binding in isolated FalkorDB, then refused a foreign expected instance without replacing it. AWS responses were explicitly synthetic adapters; the database publication was real. This is not live AWS verification.
 - After authorized AWS login renewal, the official MCP probe executed STS successfully but CloudFormation DescribeStacks was denied by an organization SCP in us-east-1. Live template/deployment/role-permission verification remains blocked. No fault or AWS resource mutation occurred.
 - Cumulative command: `./scripts/bootstrap-local.sh -p chronosops-test -f docker-compose.yml -f docker-compose.test.yml run --rm tests pytest -q` — **98 passed, 2 live tests deselected, 1 upstream warning in 240.36s**.
+
+### Step 4 commands and observations
+
+- Replaced target/evaluation-time assumptions with typed raw scrape evidence, actual `timestamp(probe_success)` agreement, fixed deployment/module labels and exporter reachability. Persisted immutable HealthObservation nodes linked to deployment/incident; no unknown monitoring state creates an actionable outage.
+- Removed the health-polling bypass and instance-ID URL construction. Recovery verification now uses the bound endpoint and SSM completion timestamp, returns supporting sample IDs and offloads blocking HTTP reads.
+- Alert receiver now requires generated token configuration and corroborated workload labels/probes. Identity hashes deployment + fingerprint + normalized startsAt. Resolved alerts without agent proof are external recovery; monitoring-loss/restoration notifications never create workload incidents.
+- Focused command in the isolated container: `pytest -q tests/test_monitoring_evidence.py tests/test_alert_evidence.py tests/test_health_store.py tests/test_monitoring_configuration.py tests/test_module_3a.py tests/test_tenant_boundary.py` — **50 passed, 1 upstream warning in 22.24s**.
+- The first focused run exposed an epoch-time comparison bug: math.isclose's default relative tolerance accepted a one-second mismatch. Setting rel_tol=0 made the raw/latest timestamp disagreement fail closed. Graph float serialization is checked within 10 microseconds rather than bitwise float equality.
+- Actual private Uvicorn HTTP smoke plus local Prometheus-response fixture: malformed timestamp returned422; corroborated failure returned200/observed with a stored observation ID; duplicate delivery reused its incident ID; a later outage generated another ID. Three malformed-body regressions failed before nested Pydantic alert validation and passed afterward. This exercised real HTTP and FalkorDB, not AWS/real workload probes. Temporary service containers were stopped and removed.
+- Official Prometheus3.15.0 `promtool check config /etc/prometheus/prometheus.yml` and `check rules /etc/prometheus/alerts.yml` passed, validating both rules. Docker Hub pull timed out; the documented official Quay alternative succeeded. Missing generated discovery targets produced the expected warning before publication. Tested digest is recorded in DECISIONS.md.
+- Final cumulative isolated command `run --rm tests pytest -q` — **130 passed, 2 live tests deselected, 1 upstream warning in 257.19s**.
 
 
 ## Live prerequisite policy

@@ -1,6 +1,7 @@
 """Execution and approval handlers for real SSM recovery and simulated failover."""
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +10,8 @@ from falkordb import FalkorDB
 
 from integrations.aws_actions import AwsRecoveryClient
 from integrations.monitoring import MonitoringClient
+from integrations.deployment import bound_deployment
+from integrations.health_store import persist_health_samples
 from seed.load import get_config
 from agents.settings import graph_names
 
@@ -27,7 +30,6 @@ async def approve_action(
     incident_id: str,
     approval_id: str,
     tenant_id: str = "acme",
-    skip_health_polling: bool = False,
 ) -> dict[str, Any]:
     """Execute human-approved recovery or simulation action."""
     config = get_config()
@@ -131,8 +133,11 @@ async def approve_action(
 
     if not instance_id or not doc_name:
         raise ActionConflictError("Missing target instance_id or document_name in proposal")
+    binding = await asyncio.to_thread(bound_deployment, config)
+    if (instance_id, doc_name) != (binding["instance_id"], binding["document_name"]):
+        raise ActionConflictError("Proposal target differs from the verified deployment")
 
-    # Atomically mark executing in graph before network call
+    # Record execution state before network submission.
     graph.query(
         "MATCH (a:ApprovalRecord {approval_id: $approval_id}) SET a.status = 'executing', a.executing_at = $ts",
         {"approval_id": approval_id, "ts": now_ts},
@@ -152,20 +157,22 @@ async def approve_action(
         {"approval_id": approval_id, "cmd_id": cmd_id},
     )
 
-    if not skip_health_polling:
-        monitor = MonitoringClient()
-        target_url = f"http://{instance_id}:80"
-        # Verify post-recovery health
-        recovered = monitor.verify_recovery_samples(target_url, required_samples=3)
-        if not recovered:
-            graph.query("MATCH (a:ApprovalRecord {approval_id: $id}) SET a.status = 'recovery_failed'", {"id": approval_id})
-            raise RuntimeError(f"Service did not return to healthy state within verification deadline after command {cmd_id}")
+    monitor = MonitoringClient(deployment_id=binding["deployment_id"])
+    recovered = await monitor.verify_recovery_samples(
+        binding["endpoint"], after=cmd_outcome["completed_at"], required_samples=3
+    )
+    if not recovered.healthy:
+        graph.query("MATCH (a:ApprovalRecord {approval_id: $id}) SET a.status = 'recovery_failed'", {"id": approval_id})
+        raise RuntimeError(f"No fresh post-command recovery proof for command {cmd_id}: {recovered.reason}")
+    sample_ids = await asyncio.to_thread(
+        persist_health_samples, binding, recovered.samples, incident_id=incident_id
+    )
 
     recovered_ts = datetime.now(timezone.utc).isoformat()
     graph.query(
         "MATCH (a:ApprovalRecord {approval_id: $approval_id}) "
-        "SET a.status = 'recovered', a.recovered_at = $ts",
-        {"approval_id": approval_id, "ts": recovered_ts},
+        "SET a.status = 'recovered', a.recovered_at = $ts, a.recovery_sample_ids = $samples",
+        {"approval_id": approval_id, "ts": recovered_ts, "samples": sample_ids},
     )
 
     return {
@@ -174,6 +181,7 @@ async def approve_action(
         "approval_id": approval_id,
         "execution_mode": "real",
         "command_id": cmd_id,
+        "recovery_sample_ids": sample_ids,
         "recovered_at": recovered_ts,
     }
 

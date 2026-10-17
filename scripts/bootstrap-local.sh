@@ -33,6 +33,20 @@ if [[ ! -f $secret_file ]]; then
 fi
 chmod 600 "$secret_file"
 
+alert_token_file=.secrets/alert-token
+if [[ -e $alert_token_file ]]; then
+    if [[ ! -f $alert_token_file || ! -s $alert_token_file ]]; then
+        echo "alert token file must be a nonempty regular file" >&2
+        exit 64
+    fi
+else
+    alert_token_tmp=$(mktemp "${alert_token_file}.XXXXXX")
+    openssl rand -hex 32 >"$alert_token_tmp"
+    chmod 600 "$alert_token_tmp"
+    mv "$alert_token_tmp" "$alert_token_file"
+fi
+chmod 600 "$alert_token_file"
+
 proxy_auth_file=.secrets/proxy.htpasswd
 proxy_credentials_file=.secrets/proxy-basic-auth.env
 proxy_token_file=.secrets/proxy-token

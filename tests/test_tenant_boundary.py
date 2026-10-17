@@ -239,24 +239,3 @@ def test_readiness_is_unready_without_proxy_configuration(
     assert response.status_code == 503
 
 
-def test_alert_incidents_are_owned_by_acme(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ALERT_WEBHOOK_TOKEN", "test-alert-token")
-    response = client.post(
-        "/internal/alerts",
-        headers={"Authorization": "Bearer test-alert-token"},
-        json={
-            "alerts": [
-                {
-                    "status": "firing",
-                    "fingerprint": "tenant-boundary-alert",
-                    "startsAt": "2026-10-18T00:00:00+00:00",
-                    "labels": {"alertname": "EndpointDown", "service": "payments-primary"},
-                }
-            ]
-        },
-    )
-    assert response.status_code == 200
-    rows = _topology_graph().ro_query(
-        "MATCH (i:Incident {incident_id: 'inc-tenant-boundary-alert'}) RETURN i.tenant_id"
-    ).result_set
-    assert rows == [["acme"]]

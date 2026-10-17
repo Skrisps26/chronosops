@@ -73,6 +73,20 @@ The operator fault CLI accepts only `stop --confirm-instance <verified-id>` and 
 
 Current live prerequisite: the organization's SCP denies CloudFormation discovery in `us-east-1`. Live deployment, restricted-role simulation and real recovery have not passed. Local template and isolated behavior checks do not substitute for those gates.
 
+### Probe evidence and repeated outages
+
+After verified deployment publication, generate the one Prometheus file-discovery target:
+
+```bash
+uv run --no-env-file python -m scripts.configure_monitoring
+```
+
+The generated `monitoring/targets/demo.json` is ignored by Git and image builds. An unbound/expired deployment clears stale targets and exits75; it never falls back to probing the application. `PROMETHEUS_URL` defaults to the internal Prometheus service.
+
+Health evidence uses actual raw scrape timestamps, synchronized HTTP/probe/exporter metrics and the configured marker-checking module. Missing, stale or disconnected evidence is `monitoring_unknown`, not an empty safe result. Recovery requires three distinct healthy scrapes after the command's completion timestamp; the health-polling bypass was removed.
+
+Bootstrap generates `.secrets/alert-token`; Alertmanager reads the mounted token file. Internal notifications must match the bound workload and current Prometheus evidence. Duplicate notifications reuse the same incident; a new `startsAt` creates a new outage. A healthy resolved notification without agent recovery proof is `recovered_externally`, never a learned recovery success.
+
 ---
 
 ## 🎬 Running the Three-Track Demonstration

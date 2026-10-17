@@ -22,6 +22,13 @@
 - `cfn-lint` 1.57.2 caught the incorrect CloudFormation spelling `CpuCredits`; the required property is `CPUCredits`. The corrected template passed validation with exit0. Reference: https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-ec2-instance-creditspecification.html.
 - Current account gate: after explicitly authorized renewal of profile `sai`, the official AWS MCP signed connection successfully executed STS GetCallerIdentity. CloudFormation DescribeStacks for `chronosops-demo` in `us-east-1` was explicitly denied by an organization service-control policy. Evidence: ignored `artifacts/aws-step3-discovery.json`. No retry, region change, workload mutation or policy bypass was attempted. Live deployment/IAM proof remains blocked, not passed.
 
+## Correctness repair: probe evidence
+
+- Prometheus raw range-vector timestamps are the scrape clock; instant query evaluation timestamps are not freshness proof. The client separately reads `timestamp(probe_success)` and requires agreement using absolute tolerance with `rel_tol=0`. Relative tolerance on epoch seconds otherwise accepted a one-second disagreement. References: https://prometheus.io/docs/prometheus/latest/querying/basics/ and https://prometheus.io/docs/prometheus/latest/querying/functions/#timestamp.
+- Probe observations are immutable stable identities derived from deployment, endpoint and scrape timestamp. Changed values under the same identity fail closed. Bounded HealthObservation writes preserve actual exporter/probe/HTTP evidence and incident links.
+- Prometheus3.15.0 release was discovered at https://github.com/prometheus/prometheus/releases/tag/v3.15.0. Docker Hub pull timed out; the documented official Quay alternative succeeded. Tested image: `quay.io/prometheus/prometheus@sha256:86b17a25c2db1d16a61b16b3c8f336679eb19e26333d03e808da387206e40faa`. `promtool check config` validated the configuration and both rules. Missing generated file-SD target produced the expected warning before publication, not a fallback target.
+- Alertmanager reads a generated token file rather than a committed fallback token. Unknown exporter/scrape evidence is separate from workload failure; neither monitoring loss nor restoration creates an application incident. Resolved workload alerts without agent proof remain external recovery.
+
 ## Sources
 
 - AWS MCP setup: https://docs.aws.amazon.com/agent-toolkit/latest/userguide/getting-started-aws-mcp-server.html

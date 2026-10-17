@@ -1,17 +1,19 @@
 """ChronosOps FastAPI application, REST endpoints, and WebSocket event stream."""
 from __future__ import annotations
 
+import asyncio
+import hmac
 import json
 import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Header, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from falkordb import FalkorDB
 
 from agents.actions import ActionConflictError, ActionNotFoundError, approve_action, reject_action
@@ -33,6 +35,10 @@ from api.contracts import (
     validate_origin,
 )
 from integrations.monitoring import MonitoringClient
+from integrations.alerts import AlertEvidenceUnavailable, ingest_alerts
+from integrations.deployment import bound_deployment
+from integrations.health_store import HealthEvidenceConflict, persist_health_samples
+from redis.exceptions import RedisError
 from seed.generate import DOCS_DIR
 from seed.load import get_config
 
@@ -56,19 +62,28 @@ app.add_middleware(
 workflow_engine = create_incident_workflow(triage_node, remediation_node, governance_node)
 
 
+class AlertNotification(BaseModel):
+    status: Literal["firing", "resolved"]
+    labels: dict[str, str]
+    startsAt: str = Field(min_length=1, max_length=64)
+    fingerprint: str = Field(min_length=1, max_length=128)
+
+
 class AlertPayload(BaseModel):
     version: str = "4"
     status: str = "firing"
     receiver: str = ""
-    alerts: list[dict[str, Any]] = []
+    alerts: list[AlertNotification] = Field(min_length=1, max_length=20)
 
 
 def verify_internal_token(authorization: str | None = Header(None)) -> bool:
-    expected_token = os.environ.get("ALERT_WEBHOOK_TOKEN") or "demo-internal-alert-secret"
+    expected_token = os.environ.get("ALERT_WEBHOOK_TOKEN")
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="Internal alert authentication is not configured")
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing or invalid bearer token")
     token = authorization.split("Bearer ", 1)[1].strip()
-    if token != expected_token:
+    if not hmac.compare_digest(token.encode(), expected_token.encode()):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return True
 
@@ -176,17 +191,24 @@ async def get_monitoring_status(
 ) -> dict[str, Any]:
     if tenant_id != "acme":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitoring status not found")
-    prom_url = os.environ.get("PROMETHEUS_URL", "http://localhost:9090")
-    client = MonitoringClient(prometheus_url=prom_url)
-    target = os.environ.get("DEMO_MONITORING_TARGET", "http://127.0.0.1:8080/healthz")
-    health = client.check_health(target)
-    return {
-        "monitoring_healthy": health.get("healthy", False),
-        "status": health.get("status", "monitoring_unknown"),
-        "target": target,
-        "sample_age_seconds": health.get("sample_age_seconds"),
-        "observed_at": datetime.now(timezone.utc).isoformat(),
-    }
+    try:
+        binding = await asyncio.to_thread(bound_deployment, get_config())
+    except (ValueError, RedisError):
+        return {"monitoring_healthy": False, "status": "monitoring_unknown",
+                "reason": "No active verified workload binding", "target": None, "samples": []}
+    client = MonitoringClient(deployment_id=binding["deployment_id"])
+    health = await asyncio.to_thread(client.check_health, binding["endpoint"])
+    if health.samples:
+        try:
+            await asyncio.to_thread(persist_health_samples, binding, health.samples)
+        except (HealthEvidenceConflict, RedisError):
+            return {"monitoring_healthy": False, "status": "monitoring_unknown",
+                    "reason": "Observation changed or deployment is inactive", "target": binding["endpoint"],
+                    "samples": []}
+    return {**health.model_dump(mode="json"), "monitoring_healthy": health.healthy,
+            "target": binding["endpoint"],
+            "observed_at": max((sample.observed_at for sample in health.samples), default=None),
+            "checked_at": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/topology")
@@ -521,46 +543,15 @@ async def receive_alert(
     payload: AlertPayload,
     authorized: bool = Depends(verify_internal_token),
 ) -> dict[str, Any]:
-    """Internal webhook receiver for Alertmanager notifications."""
-    config = get_config()
-    db = FalkorDB(
-        host=config["FALKORDB_HOST"],
-        port=int(config["FALKORDB_PORT"]),
-        username=config["FALKORDB_ADMIN_USERNAME"],
-        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
-    )
-    graph = db.select_graph(graph_names().topology)
-    now_ts = datetime.now(timezone.utc).isoformat()
-
-    recorded = []
-    for alert in payload.alerts:
-        alertname = alert.get("labels", {}).get("alertname", "UnknownAlert")
-        service = alert.get("labels", {}).get("service", "unknown")
-        status_val = alert.get("status", "firing")
-        starts_at = alert.get("startsAt", now_ts)
-        fingerprint = alert.get("fingerprint", f"{alertname}-{service}")
-
-        incident_id = f"inc-{fingerprint}"
-        graph.query(
-            "MERGE (i:Incident {incident_id: $incident_id}) "
-            "SET i.tenant_id = 'acme', "
-            "    i.alertname = $alertname, "
-            "    i.service_id = $service, "
-            "    i.status = $status, "
-            "    i.starts_at = $starts_at, "
-            "    i.recorded_at = $now_ts",
-            {
-                "incident_id": incident_id,
-                "alertname": alertname,
-                "service": service,
-                "status": status_val,
-                "starts_at": starts_at,
-                "now_ts": now_ts,
-            },
-        )
-        recorded.append({"incident_id": incident_id, "service": service, "status": status_val})
-
-    return {"status": "recorded", "incidents": recorded}
+    """Accept only allowlisted notifications corroborated by fresh probe evidence."""
+    if payload.version != "4":
+        raise HTTPException(status_code=422, detail="Unsupported Alertmanager payload version")
+    try:
+        return await ingest_alerts([alert.model_dump() for alert in payload.alerts])
+    except (AlertEvidenceUnavailable, HealthEvidenceConflict, RedisError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 # Mount built UI when dist directory exists

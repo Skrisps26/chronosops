@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime
 import time
 from typing import Any
 
@@ -109,6 +110,12 @@ class AwsRecoveryClient:
             raise RecoveryExecutionError(
                 f"SSM command {cmd_id} ended with non-success status: {final_status} ({status_details})"
             )
+        completed = inv.get("ExecutionEndDateTime") if inv else None
+        if not completed:
+            raise RecoveryExecutionError("Successful SSM status has no command completion timestamp")
+        completed_time = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+        if completed_time.tzinfo is None:
+            raise RecoveryExecutionError("SSM command completion timestamp has no timezone")
 
         return {
             "command_id": cmd_id,
@@ -116,5 +123,6 @@ class AwsRecoveryClient:
             "document_name": document_name,
             "status": final_status,
             "status_details": status_details,
+            "completed_at": completed_time.timestamp(),
             "duration_ms": duration_ms,
         }
