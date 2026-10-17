@@ -139,4 +139,16 @@ Completed observations:
 | Evaluation suite | `tests/eval_suite.py` executes all 24 questions, evaluates structured fields, ground truth entities, and safety refusals, recording p50/p95 latency and raw outputs in `artifacts/eval.json`. |
 | Benchmark results | Overall Accuracy: **100.0% (24/24)**. Ownership: 6/6 (100.0%), Provenance & Update: 6/6 (100.0%), Impact & Routes: 6/6 (100.0%), Session Memory & Isolation: 6/6 (100.0%). Latency p50 = 7743ms, p95 = 13004ms. |
 
+## Module 8 — Passed
+
+Completed observations:
+
+| Check | Observed result |
+| --- | --- |
+| Operational scripts | `scripts/up.sh`, `scripts/seed.sh`, `scripts/demo.sh`, `scripts/tunnel.sh` created and verified executable. |
+| Architecture spec | `docs/ARCHITECTURE.md` comprehensively documents the multigraph model, MCP security architecture, algorithm execution, memory hierarchy, and sequence diagrams. |
+| Side prize blog post | `docs/blog/chronosops.md` details "Why AI Agents Need Graphs, Not Flat Vector Chunks", featuring the 100.0% evaluation table, raw Cypher queries, and high-concurrency benchmarks for the AirPods 5 competition. |
+| Three-track demo | `./scripts/demo.sh --mode simulation` ran end-to-end through all three chapters (Company Brain, Agents That Act, Agent Memory); verified and generated `artifacts/track-demo.json`. |
+| Behavior tests | `pytest -q tests/test_module_8.py` passed (4/4). Full test suite passed (57/57). |
+
 Detailed integration decisions: [DECISIONS.md](DECISIONS.md). Re-run instructions: [README.md](../README.md).

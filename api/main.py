@@ -60,7 +60,7 @@ class AlertPayload(BaseModel):
 
 
 def verify_internal_token(authorization: str | None = Header(None)) -> bool:
-    expected_token = os.environ.get("ALERT_WEBHOOK_TOKEN", "demo-internal-alert-secret")
+    expected_token = os.environ.get("ALERT_WEBHOOK_TOKEN") or "demo-internal-alert-secret"
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing or invalid bearer token")
     token = authorization.split("Bearer ", 1)[1].strip()
