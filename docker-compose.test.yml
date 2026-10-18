@@ -33,6 +33,7 @@ x-test-environment: &test-environment
   AWS_CONFIG_FILE: ""
   SLACK_TEAM_ID: ""
   SLACK_CHANNEL_ID: ""
+  SLACK_SERVICE_ID: ""
   SLACK_BOT_TOKEN: ""
   SLACK_APP_TOKEN: ""
 

@@ -257,6 +257,8 @@ async def _initialize_company_schema() -> None:
     config = get_config()
     graph = _company_graph(config)
     _set_schema_state(graph, schema_ready=False)
+    from seed.load import ensure_application_constraints
+    await asyncio.to_thread(ensure_application_constraints, graph, company=True)
     requests: list[dict[str, Any]] = []
     try:
         known_service_ids = _validate_canonical_tables()

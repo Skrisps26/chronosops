@@ -211,6 +211,19 @@ async def get_monitoring_status(
             "checked_at": datetime.now(timezone.utc).isoformat()}
 
 
+@app.get("/api/connectors/slack")
+async def get_slack_connector_status(
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict[str, Any]:
+    """Expose observed connector state without granting ownership or source freshness."""
+    from integrations.slack import get_connector_status
+
+    try:
+        return await asyncio.to_thread(get_connector_status, tenant_id)
+    except (SourceUnavailable, RedisError) as error:
+        raise HTTPException(status_code=503, detail="Slack connector status unavailable") from error
+
+
 @app.get("/api/topology")
 async def get_topology_for_visualization(
     tenant_id: str = Depends(get_tenant_id),

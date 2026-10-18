@@ -57,7 +57,7 @@ After seeding, run exactly one source writer while submitting document edits:
 AWS_PROFILE=sai AWS_REGION=us-east-1 uv run --frozen python -m seed.ingest --worker
 ```
 
-All writers must share `CHRONOSOPS_SOURCE_LOCK_PATH` on the same local filesystem; the default is `.secrets/source-worker-company_brain.lock`. Never run a second writer in a separate container/filesystem. The Slack connector will own this same worker when enabled. API requests do not perform SDK writes.
+All writers must share `CHRONOSOPS_SOURCE_LOCK_PATH` on the same local filesystem; the default is `.secrets/source-worker-company_brain.lock`. Never run a second writer in a separate container/filesystem. The Slack connector owns this same worker when enabled; do not also run the standalone writer. API requests do not perform SDK writes.
 
 Edits withdraw readiness before extraction and publish only the matching finalized revision. Citations include the raw-source SHA-256, source version, revision, actual SDK chunk ID/index, excerpt and path/permalink. `/api/sources/{document_id}` returns current graph-backed chunks; unknown/deleted sources return 404, pending/failed sources return 503. A publication timeout is not success.
 
@@ -72,6 +72,31 @@ AWS_PROFILE=sai ./scripts/bootstrap-local.sh -p chronosops-test \
 ```
 
 For login-session profiles, botocore requires a writable refresh cache. This overlay copies existing login-cache files into a mode-0700 private tmpfs and uses the supported `AWS_LOGIN_CACHE_DIRECTORY` setting; the host cache stays read-only and the temporary cache disappears with the runner. It does not export credentials, change profiles, or enable recovery.
+
+### Slack source worker and notifications
+
+Configure `SLACK_TEAM_ID`, `SLACK_CHANNEL_ID`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` and an explicit canonical `SLACK_SERVICE_ID` in `.env`. The dedicated public demo channel must include the installed bot; its Socket Mode app token needs `connections:write`. For the selected payments story, bind the channel explicitly to `payments-primary`. Slack content never grants recovery authority.
+
+After trusted seeding has installed the application identity constraints, run the single connector/source process:
+
+```bash
+AWS_PROFILE=sai AWS_REGION=us-east-1 uv run --frozen --env-file .env python -m integrations.slack
+```
+
+Posts/edits/deletes enter a durable allowlisted inbox. Processing completes only after the matching SDK publication/deletion; old retries cannot resurrect deleted content. Reconnect reads at most four pages of fifteen top-level messages, not complete replay. An actual exact-source read is required to validate current Slack evidence; a connected socket alone is not freshness proof.
+
+Authenticated `GET /api/connectors/slack` reports observed connection/heartbeat state and replay gaps. A stale heartbeat is unavailable; Globex cannot obtain Acme connector state by forging a query parameter.
+
+Notifications use a database-constrained immutable outbox. Unknown submissions never automatically resend; successful sends with missing permalinks retry only receipt reads. Explicit rate limits honor `Retry-After`. Notification failure never changes measured recovery outcome. An operator can reconcile an observed unknown notification without posting:
+
+```bash
+uv run --frozen --env-file .env python -c \
+  'import asyncio,sys; from integrations.slack_notifications import reconcile_notification_receipt; print(asyncio.run(reconcile_notification_receipt(sys.argv[1])))' \
+  "$NOTIFICATION_ID"
+```
+
+Reconciliation requires one matching actual bot/channel/versioned-text/thread receipt within the bounded history scan; missing or ambiguous proof remains unknown. The live installed-app human post/edit/delete gate is currently blocked by absent Slack configuration. Controlled HTTP adapters and graph tests are not live Slack proof.
+
 
 
 ### Disposable workload safety

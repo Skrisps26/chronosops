@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,29 @@ def get_config() -> dict[str, str]:
     config.setdefault("FALKORDB_PORT", "6379")
     config.setdefault("FALKORDB_ADMIN_USERNAME", "admin")
     return config
+
+
+def ensure_application_constraints(graph: Any, *, company: bool = False) -> None:
+    """Install application identity constraints using trusted seeding credentials."""
+    identities = (("SlackInbox", ("event_id",)), ("SourceRecord", ("document_id",)),
+                  ("SourceRequest", ("request_id",)), ("SlackConnector", ("tenant_id", "connector_id"))) \
+        if company else (("SlackNotification", ("outbox_key",)),)
+    for label, properties in identities:
+        existing = [item for item in graph.list_constraints()
+                    if item["type"] == "UNIQUE" and item["label"] == label
+                    and tuple(item["properties"]) == properties]
+        if not existing:
+            graph.create_node_unique_constraint(label, *properties)
+        deadline = time.monotonic() + 3
+        while True:
+            matches = [item for item in graph.list_constraints()
+                       if item["type"] == "UNIQUE" and item["label"] == label
+                       and tuple(item["properties"]) == properties]
+            if len(matches) == 1 and matches[0]["status"] == "OPERATIONAL":
+                break
+            if any(item["status"] == "FAILED" for item in matches) or time.monotonic() >= deadline:
+                raise RuntimeError(f"Application identity constraint unavailable: {label}")
+            time.sleep(0.02)
 
 
 def load_topology(
@@ -60,6 +84,7 @@ def load_topology(
         "SET m.ready = false, m.hash = $hash, m.started_at = $ts",
         {"hash": manifest["manifest_hash"], "ts": start_ts},
     )
+    ensure_application_constraints(graph)
 
     if simulate_interruption:
         print("Simulating load interruption before loading entities...")

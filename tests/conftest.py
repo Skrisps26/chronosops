@@ -59,6 +59,8 @@ def _seed_company_fixture(graph_name: str) -> None:
         "MERGE (m:Meta {id: 'company_brain_meta'}) "
         "SET m.ready = true, m.schema_ready = true, m.hash = 'test-company-fixture-v1'"
     )
+    from seed.load import ensure_application_constraints
+    ensure_application_constraints(graph, company=True)
     graph.query(
         "UNWIND $services AS service "
         "MERGE (s:Service {services__service_id: service.service_id}) "
