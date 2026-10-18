@@ -216,7 +216,11 @@ export default function App() {
           style: {
             label: 'data(id)',
             'font-size': '10px',
-            color: '#f3f4f6',
+            'font-weight': 600,
+            color: '#f8fafc',
+            'text-outline-width': 2,
+            'text-outline-color': '#020617',
+            'text-outline-opacity': 0.9,
             'background-color': '#10b981',
             'text-valign': 'bottom',
             'text-margin-y': 4,
@@ -267,15 +271,27 @@ export default function App() {
         name: 'cose',
         animate: false,
         randomize: false,
+        componentSpacing: 100,
+        nodeRepulsion: () => 2048000,
+        nodeOverlap: 50,
+        idealEdgeLength: () => 90,
+        edgeElasticity: () => 32,
+        nestingFactor: 1.2,
+        gravity: 0.15,
+        numIter: 1200,
+        initialTemp: 1000,
+        coolingFactor: 0.99,
+        minTemp: 1.0,
+        padding: 30,
       },
     });
-
     cy.on('tap', 'node', (evt) => {
       const data = evt.target.data() as NodeData;
       setSelectedNode(data);
     });
 
     cyInstance.current = cy;
+    (window as unknown as { __cy?: cytoscape.Core }).__cy = cy;
     const resize = new ResizeObserver(() => {
       cy.resize();
       cy.fit(undefined, 30);

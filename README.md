@@ -35,8 +35,17 @@ Playable recordings of the running platform are available in the repository:
 ChronosOps anchors all AI reasoning directly in FalkorDB. The agents execute parameterized OpenCypher queries against graph nodes and relationships to calculate blast radius, find failover routes, enforce memory exclusions, and look up ownership.
 
 ```mermaid
-flowchart LR
+flowchart TD
+    subgraph Agents ["AI Agents"]
+        direction LR
+        Triage["Triage Agent"]
+        Remediation["Remediation Agent"]
+        Memory["Memory Agent"]
+        Brain["Company Brain Agent"]
+    end
+
     subgraph FalkorDB ["FalkorDB Graph (Nodes and Relationships)"]
+        direction TB
         Service["(:Service)"] -->|DEPENDS_ON| DepService["(:Service)"]
         Service -->|ROUTES_TO| BackupService["(:Service)"]
         Service -->|OWNED_BY| Team["(:Team)"]
@@ -46,19 +55,11 @@ flowchart LR
         Workflow["(:WorkflowSubgraph)"] -->|NEXT_STEP| Step["(:WorkflowStep)"]
     end
 
-    subgraph Agents ["AI Agents"]
-        Triage["Triage Agent"]
-        Remediation["Remediation Agent"]
-        Memory["Memory Agent"]
-        Brain["Company Brain Agent"]
-    end
-
-    Triage -->|"1. Blast radius query (reverse DEPENDS_ON)"| Service
-    Remediation -->|"2. algo.SPpaths query (ROUTES_TO <= cost cap)"| BackupService
-    Memory -->|"3. Semantic exclusion query (BLOCKED_BY fact)"| Fact
-    Memory -->|"4. Procedural workflow query (NEXT_STEP)"| Workflow
-    Brain -->|"5. Grounded ownership query (OWNED_BY)"| Team
-```
+    Triage -->|"1. Reverse DEPENDS_ON"| Service
+    Remediation -->|"2. algo.SPpaths on ROUTES_TO"| BackupService
+    Memory -->|"3. BLOCKED_BY fact exclusions"| Fact
+    Memory -->|"4. NEXT_STEP procedural steps"| Workflow
+    Brain -->|"5. OWNED_BY canonical lookup"| Team
 
 ### Graph Nodes and Relationships
 
