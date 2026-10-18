@@ -1,0 +1,34 @@
+# Explicit live-model overlay only. Default regression tests remain network-isolated.
+# Credentials are supplied separately through read-only mounts and the SDK chain.
+services:
+  tests:
+    user: "0:0"
+    security_opt:
+      - label=disable
+    tmpfs:
+      - /run/aws-login-cache:rw,noexec,nosuid,nodev,mode=0700
+    environment:
+      HOME: /home/chronosops
+      AWS_PROFILE: "${AWS_PROFILE:?Set an existing AWS generation profile}"
+      AWS_CONFIG_FILE: /home/chronosops/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /home/chronosops/.aws/credentials
+      AWS_LOGIN_CACHE_DIRECTORY: /run/aws-login-cache
+    volumes:
+      - "${HOME}/.aws:/home/chronosops/.aws:ro"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        for cache in /home/chronosops/.aws/login/cache/*.json; do
+          [ ! -f "$$cache" ] || cp "$$cache" /run/aws-login-cache/
+        done
+        unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+        exec "$$@"
+      - bedrock-test
+    networks:
+      - default
+      - bedrock-egress
+networks:
+  bedrock-egress:
+    internal: false

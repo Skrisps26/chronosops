@@ -39,7 +39,7 @@ from integrations.alerts import AlertEvidenceUnavailable, ingest_alerts
 from integrations.deployment import bound_deployment
 from integrations.health_store import HealthEvidenceConflict, persist_health_samples
 from redis.exceptions import RedisError
-from seed.generate import DOCS_DIR
+from seed.sources import SourceNotFound, SourceUnavailable, get_published_source
 from seed.load import get_config
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -497,21 +497,14 @@ async def get_source_document(
     document_id: str,
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
-    """Retrieve full text and metadata of a source document."""
-    # Look in DOCS_DIR
-    target = DOCS_DIR / f"{document_id}.md"
-    if not target.is_file():
-        # Try raw document_id
-        target = DOCS_DIR / document_id
-        if not target.is_file():
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Document '{document_id}' not found")
-
-    text = target.read_text(encoding="utf-8")
-    return {
-        "document_id": document_id,
-        "filename": target.name,
-        "content": text,
-    }
+    """Return only the current published SDK source revision, never a local file."""
+    try:
+        source = await asyncio.to_thread(get_published_source, document_id, tenant_id)
+    except SourceNotFound as error:
+        raise HTTPException(status_code=404, detail="Source not found") from error
+    except (SourceUnavailable, RedisError) as error:
+        raise HTTPException(status_code=503, detail="Current source evidence unavailable") from error
+    return {**source, "content": "\n\n".join(chunk["text"] for chunk in source["chunks"])}
 
 
 @app.websocket("/api/runs/{run_id}/events")

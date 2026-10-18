@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -52,49 +53,46 @@ def _read_csv(name: str) -> list[dict[str, str]]:
 
 
 def _seed_company_fixture(graph_name: str) -> None:
-    """Seed deterministic native and SDK-shaped data without invoking Bedrock."""
+    """Seed signed canonical entities and current published SDK-shaped evidence."""
     graph = _admin_db().select_graph(graph_name)
     graph.query(
         "MERGE (m:Meta {id: 'company_brain_meta'}) "
-        "SET m.ready = true, m.hash = 'test-company-fixture-v1'"
+        "SET m.ready = true, m.schema_ready = true, m.hash = 'test-company-fixture-v1'"
     )
     graph.query(
         "UNWIND $services AS service "
-        "MERGE (s:Service {service_id: service.service_id}) "
-        "SET s.name = service.service_name, s.environment = service.environment, "
-        "s.owner_team = service.owner_team, s.tier = service.tier",
+        "MERGE (s:Service {services__service_id: service.service_id}) "
+        "SET s.id=service.service_id, s.name=service.service_name, s.services__environment=service.environment, "
+        "s.services__owner_team=service.owner_team, s.services__tier=service.tier",
         {"services": _read_csv("services.csv")},
     )
     graph.query(
         "UNWIND $teams AS team "
-        "MERGE (t:Team {team_id: team.team_id}) SET t.name = team.name",
+        "MERGE (t:Team {teams__team_id:team.team_id}) SET t.name=team.name",
         {"teams": _read_csv("teams.csv")},
     )
     graph.query(
         "UNWIND $people AS person "
-        "MERGE (p:Person {person_id: person.person_id}) "
-        "SET p.name = person.name, p.email = person.email, p.team = person.team",
+        "MERGE (p:Person {people__person_id:person.person_id}) "
+        "SET p.name=person.name, p.people__email=person.email, p.people__team=person.team",
         {"people": _read_csv("people.csv")},
     )
     graph.query(
-        "MATCH (p:Person), (t:Team) WHERE p.team = t.name "
-        "MERGE (p)-[:MEMBER_OF]->(t)"
+        "MATCH (p:Person), (t:Team) WHERE p.people__team=t.name "
+        "MERGE (p)-[:RELATES {rel_type:'MEMBER_OF'}]->(t)"
     )
     graph.query(
-        "MATCH (t:Team), (s:Service) WHERE t.name = s.owner_team "
-        "MERGE (t)-[:OWNS]->(s)"
+        "MATCH (t:Team), (s:Service) WHERE t.name=s.services__owner_team "
+        "MERGE (s)-[:RELATES {rel_type:'OWNED_BY'}]->(t)"
     )
     graph.query(
         "UNWIND $aliases AS alias "
         "MERGE (a:Alias {name: alias.alias}) "
-        "WITH a, alias MATCH (s:Service {service_id: alias.service_id}) "
+        "WITH a, alias MATCH (s:Service {services__service_id:alias.service_id}) "
         "MERGE (a)-[:POINTS_TO]->(s)",
         {"aliases": _read_csv("aliases.csv")},
     )
 
-    # This is deliberately shaped like the pinned SDK output. The native
-    # authorship edges remain deterministic fixture data until step 5 owns the
-    # supported ingestion lifecycle.
     documents = [
         {
             "id": "rfc-001-payments-failover",
@@ -122,21 +120,22 @@ def _seed_company_fixture(graph_name: str) -> None:
         "UNWIND $documents AS document "
         "MERGE (d:Document {id: document.id}) "
         "MERGE (c:Chunk {id: document.chunk_id}) "
-        "SET c.text = document.text "
+        "SET c.text=document.text, c.index=0 "
         "MERGE (d)-[:PART_OF]->(c) "
         "WITH d, c, document "
-        "MATCH (s:Service {service_id: document.service_id}) "
-        "MATCH (p:Person {person_id: document.author_id}) "
-        "MERGE (d)-[:ABOUT]->(s) "
+        "MATCH (s:Service {services__service_id:document.service_id}) "
         "MERGE (s)-[:MENTIONED_IN]->(c) "
-        "MERGE (c)-[:RELATES {rel_type: 'MENTIONS'}]->(s) "
-        "MERGE (p)-[:AUTHORED]->(d)",
-        {"documents": documents},
-    )
-    graph.query(
-        "MATCH (p:Person {person_id: 'user-alice'}), "
-        "(d:Document {id: 'rfc-001-payments-failover'}) "
-        "MERGE (p)-[:RESOLVED]->(d)"
+        "MERGE (r:SourceRecord {document_id:document.id}) "
+        "SET r.status='published', r.revision=1, r.published_revision=1, r.origin='synthetic', "
+        "r.content_hash=document.hash, r.source_version='1', r.author_id=document.author_id, "
+        "r.service_id=document.service_id, r.path='seed/data/docs/'+document.id+'.md', r.permalink='' "
+        "MERGE (r)-[:PUBLISHED_CHUNK]->(c) "
+        "MERGE (con:Contribution {id:document.id+':1:'+document.author_id}) "
+        "SET con.active=true, con.revision=1, con.document_id=document.id, "
+        "con.author_id=document.author_id, con.service_id=document.service_id "
+        "MERGE (con)-[:CONTRIBUTION_FOR]->(r)",
+        {"documents":[dict(document, hash=hashlib.sha256(document["text"].encode()).hexdigest())
+                      for document in documents]},
     )
 
 

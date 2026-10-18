@@ -49,6 +49,31 @@ npm run build --prefix ui
 ```
 This generates and loads the 45-service topology into `ops_topology`, and ingests 16 architecture documents into `company_brain` via GraphRAG-SDK with Amazon Bedrock.
 
+Company ingestion uses SDK structured CSV mappings before source extraction. Canonical IDs live in signed SDK properties (`services__service_id`, `people__person_id`); ownership uses `RELATES {rel_type:'OWNED_BY'}` from Service to Team. Source authorship comes from validated metadata, not co-mentions.
+
+After seeding, run exactly one source writer while submitting document edits:
+
+```bash
+AWS_PROFILE=sai AWS_REGION=us-east-1 uv run --frozen python -m seed.ingest --worker
+```
+
+All writers must share `CHRONOSOPS_SOURCE_LOCK_PATH` on the same local filesystem; the default is `.secrets/source-worker-company_brain.lock`. Never run a second writer in a separate container/filesystem. The Slack connector will own this same worker when enabled. API requests do not perform SDK writes.
+
+Edits withdraw readiness before extraction and publish only the matching finalized revision. Citations include the raw-source SHA-256, source version, revision, actual SDK chunk ID/index, excerpt and path/permalink. `/api/sources/{document_id}` returns current graph-backed chunks; unknown/deleted sources return 404, pending/failed sources return 503. A publication timeout is not success.
+
+Canonical CSV row chunks have their own published source records. Ownership citations point to those actual SDK chunks, not an unrelated RFC. Change canonical tables through structured operator re-ingestion, not the document-edit entry point.
+
+The default test network cannot reach AWS. The explicit live overlay adds egress only to the test runner and mounts the existing AWS directory read-only:
+
+```bash
+AWS_PROFILE=sai ./scripts/bootstrap-local.sh -p chronosops-test \
+  -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.bedrock-test.yml \
+  run --rm tests pytest -q -m bedrock_live tests/test_sdk_ingestion.py
+```
+
+For login-session profiles, botocore requires a writable refresh cache. This overlay copies existing login-cache files into a mode-0700 private tmpfs and uses the supported `AWS_LOGIN_CACHE_DIRECTORY` setting; the host cache stays read-only and the temporary cache disappears with the runner. It does not export credentials, change profiles, or enable recovery.
+
+
 ### Disposable workload safety
 
 Real recovery stays disabled with `REAL_RECOVERY_ENABLED=false`. Deployment, fault injection and teardown are operator-only; the app must never mount the administrator operator profile.
@@ -91,7 +116,7 @@ Bootstrap generates `.secrets/alert-token`; Alertmanager reads the mounted token
 
 ## 🎬 Running the Three-Track Demonstration
 
-Execute the self-contained three-chapter demonstration in simulation mode:
+The current simulation script requires the seeded database and single source writer above. The live three-chapter acceptance gate remains unverified:
 
 ```bash
 AWS_PROFILE=sai AWS_REGION=us-east-1 ./scripts/demo.sh --mode simulation
@@ -101,8 +126,8 @@ AWS_PROFILE=sai AWS_REGION=us-east-1 ./scripts/demo.sh --mode simulation
 
 1. **Chapter 1: Company Brain (Track 03)**
    - Queries `payments-primary` ownership: returns Team Payments and key engineers (Alice Chen, Bob Martinez).
-   - Computes Bus Factor: flags **1 (Single Maintainer Risk)** because Alice Chen authored all key RFCs and resolved all tickets.
-   - Live Update: atomically updates RFC-001 failover rationale in FalkorDB; subsequent queries immediately cite the revised text!
+   - Computes contributor concentration from current validated source records; no recorded contributors means unknown, not a healthy distribution.
+   - Queues RFC-001 edits through the source writer; subsequent queries cite only the published revision and changed hash/excerpt.
 
 2. **Chapter 2: Agents That Act on Connected Data (Track 01)**
    - Calculates Downstream Blast Radius: failure of `payments-primary` reaches exactly 4 services (`checkout`, `gateway`, `orders`, `worker`).

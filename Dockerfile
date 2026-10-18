@@ -5,17 +5,29 @@ COPY mcp/package.json mcp/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
 # Official Python 3.12 runtime pinned by manifest digest.
-FROM docker.io/library/python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+FROM docker.io/library/python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS python-base
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends libstdc++6 git ca-certificates \
+    && apt-get install --yes --no-install-recommends libstdc++6 libgomp1 git ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip install --no-cache-dir uv==0.11.31
 
-COPY --from=mcp-deps /usr/local/bin/node /usr/local/bin/node
+FROM python-base AS python-deps
+# Compile hnswlib against the container ABI, never reuse its host-built wheel.
+ENV UV_CACHE_DIR=/root/.cache/uv/chronosops-debian13-py312-portable \
+    HNSWLIB_NO_NATIVE=1
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
+RUN UV_CACHE_DIR=/root/.cache/uv uv sync --frozen --no-install-project --no-install-package hnswlib \
+    && uv sync --frozen --no-install-project
+
+FROM python-base
+COPY --from=mcp-deps /usr/local/bin/node /usr/local/bin/node
+WORKDIR /app
+COPY --from=python-deps /app/.venv /app/.venv
 COPY --from=mcp-deps /mcp /app/mcp
 COPY . .
 

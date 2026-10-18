@@ -1,17 +1,18 @@
-"""Ingest company knowledge documents and structured tables into FalkorDB company_brain."""
+"""Ingest Company Brain sources through the supported GraphRAG SDK lifecycle."""
 from __future__ import annotations
 
 import argparse
 import asyncio
 import csv
+import hashlib
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from dotenv import dotenv_values
+import hnswlib  # Required by the SDK resolver; fail before extraction if its native runtime is missing.
 from falkordb import FalkorDB
 from graphrag_sdk import (
     ConnectionConfig,
@@ -22,11 +23,17 @@ from graphrag_sdk import (
 from graphrag_sdk.ingestion.extraction_strategies.entity_extractors import LLMExtractor
 from graphrag_sdk.ingestion.extraction_strategies.graph_extraction import GraphExtraction
 
+from agents.settings import graph_names
 from seed.generate import DATA_DIR, DOCS_DIR, MANIFEST_FILE
 from seed.ontology import get_company_ontology
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRETS_FILE = ROOT / ".secrets" / "db.env"
+_CANONICAL_TABLES = (
+    ("services.csv", "service_id", "service_name"),
+    ("people.csv", "person_id", "name"),
+    ("teams.csv", "team_id", "name"),
+)
 
 
 def get_config() -> dict[str, str]:
@@ -63,201 +70,301 @@ def get_providers(config: dict[str, str]) -> tuple[LiteLLM, LiteLLMEmbedder]:
     return llm, embedder
 
 
-async def ingest_company_brain(
-    graph_name: str = "company_brain",
-    wipe: bool = False,
-) -> dict[str, Any]:
-    config = get_config()
+def _company_graph(config: dict[str, str]) -> Any:
     db = FalkorDB(
         host=config["FALKORDB_HOST"],
         port=int(config["FALKORDB_PORT"]),
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
+    return db.select_graph(graph_names().company)
 
-    if wipe:
-        try:
-            db.select_graph(graph_name).delete()
-        except Exception:
-            pass
 
-    graph = db.select_graph(graph_name)
-
-    manifest = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
-    start_ts = datetime.now(timezone.utc).isoformat()
-    graph.query(
-        "MERGE (m:Meta {id: 'company_brain_meta'}) "
-        "SET m.ready = false, m.hash = $hash, m.started_at = $ts",
-        {"hash": manifest["manifest_hash"], "ts": start_ts},
-    )
-
-    llm, embedder = get_providers(config)
-    ontology = get_company_ontology()
-    extractor = GraphExtraction(llm=llm, entity_extractor=LLMExtractor(llm=llm))
-
-    connection = ConnectionConfig(
+def _connection(config: dict[str, str]) -> ConnectionConfig:
+    return ConnectionConfig(
         host=config["FALKORDB_HOST"],
         port=int(config["FALKORDB_PORT"]),
         username=config["FALKORDB_ADMIN_USERNAME"],
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
-        graph_name=graph_name,
+        graph_name=graph_names().company,
         query_timeout_ms=3_000,
     )
-    doc_files = sorted(DOCS_DIR.glob("*.md"))
 
+
+def _extractor(llm: LiteLLM) -> GraphExtraction:
+    return GraphExtraction(llm=llm, entity_extractor=LLMExtractor(llm=llm))
+
+
+def _read_table(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding="utf-8", newline="") as source:
+        return list(csv.DictReader(source))
+
+
+def _validate_canonical_tables() -> set[str]:
+    """Refuse ambiguous canonical identities before SDK writes any table."""
+    service_ids: set[str] = set()
+    for filename, canonical_column, reconciliation_column in _CANONICAL_TABLES:
+        seen_canonical: set[str] = set()
+        seen_reconciliation: set[str] = set()
+        for row in _read_table(DATA_DIR / filename):
+            canonical_id = (row.get(canonical_column) or "").strip()
+            reconciliation_key = (row.get(reconciliation_column) or "").strip()
+            if not canonical_id or not reconciliation_key:
+                raise ValueError(
+                    f"{filename} requires non-empty {canonical_column} and {reconciliation_column}"
+                )
+            if canonical_id in seen_canonical:
+                raise ValueError(f"{filename} duplicates canonical {canonical_column} {canonical_id!r}")
+            if reconciliation_key in seen_reconciliation:
+                raise ValueError(
+                    f"{filename} duplicates SDK reconciliation key "
+                    f"{reconciliation_column} {reconciliation_key!r}"
+                )
+            seen_canonical.add(canonical_id)
+            seen_reconciliation.add(reconciliation_key)
+        if filename == "services.csv":
+            service_ids = seen_canonical
+    return service_ids
+
+
+def load_alias_mappings(
+    *,
+    alias_path: Path | None = None,
+    known_service_ids: set[str] | None = None,
+) -> list[dict[str, str]]:
+    """Read stable explicit aliases without selecting an arbitrary target."""
+    known_service_ids = known_service_ids if known_service_ids is not None else _validate_canonical_tables()
+    aliases: list[dict[str, str]] = []
+    canonical_names = {
+        value.casefold(): row["service_id"]
+        for row in _read_table(DATA_DIR / "services.csv")
+        for value in (row["service_id"], row["service_name"])
+    }
+    seen: set[str] = set()
+    for row in _read_table(alias_path or DATA_DIR / "aliases.csv"):
+        name = (row.get("alias") or "").strip()
+        service_id = (row.get("service_id") or "").strip()
+        normalized = name.casefold()
+        if not name or not service_id:
+            raise ValueError("aliases.csv requires non-empty alias and service_id")
+        if normalized in seen:
+            raise ValueError(f"aliases.csv duplicates alias {name!r}")
+        if service_id not in known_service_ids:
+            raise ValueError(f"aliases.csv maps {name!r} to unknown service_id {service_id!r}")
+        if normalized in canonical_names and canonical_names[normalized] != service_id:
+            raise ValueError(f"aliases.csv conflicts with canonical identity {name!r}")
+        seen.add(normalized)
+        aliases.append({"id": f"alias:{normalized}", "name": name, "service_id": service_id})
+    return aliases
+
+
+def _publish_aliases(graph: Any, aliases: list[dict[str, str]]) -> None:
+    """Attach aliases only to the exact SDK-created canonical Service identity."""
+    ontology = get_company_ontology()
+    for filename, canonical_column, _ in _CANONICAL_TABLES:
+        mapping = next(table for table in ontology.tables if Path(table.source).name == filename)
+        property_name = mapping.signed_name(canonical_column)
+        rows = graph.ro_query(
+            f"MATCH (n:{mapping.label}) WHERE n.{property_name} IS NOT NULL "
+            f"RETURN n.{property_name}, count(n) LIMIT 100", timeout=3000,
+        ).result_set
+        expected = {row[canonical_column]: 1 for row in _read_table(DATA_DIR / filename)}
+        if dict(rows) != expected:
+            raise ValueError(f"SDK canonical identities changed or became ambiguous for {filename}")
+    bindings: list[dict[str, str]] = []
+    for alias in aliases:
+        rows = graph.ro_query(
+            "MATCH (s:Service) WHERE s.services__service_id = $service_id RETURN s.id",
+            {"service_id": alias["service_id"]},
+        ).result_set
+        if len(rows) != 1:
+            raise ValueError(
+                f"alias {alias['name']!r} needs exactly one SDK Service with "
+                f"service_id {alias['service_id']!r}; found {len(rows)}"
+            )
+        bindings.append({**alias, "service_node_id": str(rows[0][0])})
+
+    graph.query(
+        "MATCH (a:Alias) WHERE a.id IS NULL OR NOT a.id IN $ids DETACH DELETE a",
+        {"ids": [binding["id"] for binding in bindings]},
+    )
+    for binding in bindings:
+        graph.query(
+            "MERGE (a:Alias {id: $alias_id}) "
+            "SET a.name = $alias_name "
+            "WITH a OPTIONAL MATCH (a)-[old:POINTS_TO]->() DELETE old "
+            "WITH DISTINCT a MATCH (s:Service {id: $service_node_id}) "
+            "MERGE (a)-[:POINTS_TO]->(s)",
+            {
+                "alias_id": binding["id"],
+                "alias_name": binding["name"],
+                "service_node_id": binding["service_node_id"],
+            },
+        )
+
+
+def _set_schema_state(graph: Any, *, schema_ready: bool, error: str | None = None) -> None:
+    graph.query(
+        "MERGE (m:Meta {id: 'company_brain_meta'}) "
+        "SET m.ready = false, m.schema_ready = $schema_ready, m.schema_error = $error",
+        {"schema_ready": schema_ready, "error": error},
+    )
+
+
+async def apply_sdk_source(request: dict[str, Any]) -> None:
+    """Apply one already-validated source request through the supported SDK."""
+    document_id = request.get("document_id")
+    if not isinstance(document_id, str) or not document_id.strip():
+        raise ValueError("source request requires a non-empty document_id")
+
+    config = get_config()
+    llm, embedder = get_providers(config)
     async with GraphRAG(
-        connection=connection,
+        connection=_connection(config),
         llm=llm,
         embedder=embedder,
-        ontology=ontology,
+        ontology=get_company_ontology(),
         embedding_dimension=256,
         enable_cypher=False,
     ) as rag:
-        # 1. Ingest markdown sources
-        for doc_path in doc_files:
-            doc_id = doc_path.stem
-            await rag.ingest(
-                source=str(doc_path),
-                document_id=doc_id,
-                extractor=extractor,
+        if request.get("source_kind") == "canonical_table":
+            if document_id not in {filename for filename, _, _ in _CANONICAL_TABLES} or request.get("operation") == "delete":
+                raise ValueError("Canonical tables require structured operator ingestion")
+            source_path = DATA_DIR / document_id
+            if hashlib.sha256(source_path.read_bytes()).hexdigest() != request["content_hash"]:
+                raise ValueError("Canonical source changed; resubmit structured ingestion")
+            await rag.ingest(source=str(source_path), strict_mapping=True)
+        elif request.get("operation") == "delete":
+            await rag.delete_document(document_id, if_missing="ignore")
+        else:
+            text = request.get("text")
+            if not isinstance(text, str):
+                raise ValueError("upsert source request requires text")
+            await rag.update(
+                text=text,
+                document_id=document_id,
+                extractor=_extractor(llm),
+                if_missing="ingest" if request.get("allow_create") else "error",
             )
+        await rag.finalize(resolve=True, judge=True, judge_vote=True)
+        _publish_aliases(_company_graph(config), load_alias_mappings())
 
-        # 2. Finalize initial graph
-        await rag.finalize(resolve=False, judge=False)
 
-    # 3. Ingest and link canonical structured entities & aliases directly
-    # Structured services
-    with (DATA_DIR / "services.csv").open(encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            graph.query(
-                "MERGE (s:Service {service_id: $service_id}) "
-                "SET s.name = $name, s.owner_team = $owner_team, s.environment = $environment, s.tier = $tier",
-                {
-                    "service_id": row["service_id"],
-                    "name": row["service_name"],
-                    "owner_team": row["owner_team"],
-                    "environment": row["environment"],
-                    "tier": row["tier"],
-                },
-            )
+async def _initialize_company_schema() -> None:
+    """Ingest the initial bounded corpus in one SDK session under the worker lock."""
+    from seed.sources import enqueue_source, publish_source_request, _fail_request
 
-    # Structured people
-    with (DATA_DIR / "people.csv").open(encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            graph.query(
-                "MERGE (p:Person {person_id: $person_id}) "
-                "SET p.name = $name, p.email = $email, p.team = $team",
-                {
-                    "person_id": row["person_id"],
-                    "name": row["name"],
-                    "email": row["email"],
-                    "team": row["team"],
-                },
-            )
+    config = get_config()
+    graph = _company_graph(config)
+    _set_schema_state(graph, schema_ready=False)
+    requests: list[dict[str, Any]] = []
+    try:
+        known_service_ids = _validate_canonical_tables()
+        aliases = load_alias_mappings(known_service_ids=known_service_ids)
+        llm, embedder = get_providers(config)
+        async with GraphRAG(
+            connection=_connection(config),
+            llm=llm,
+            embedder=embedder,
+            ontology=get_company_ontology(),
+            embedding_dimension=256,
+            enable_cypher=False,
+        ) as rag:
+            for filename, _, _ in _CANONICAL_TABLES:
+                source_path = DATA_DIR / filename
+                request = enqueue_source(
+                    filename, source_path.read_bytes().decode("utf-8"), allow_create=True,
+                    source_kind="canonical_table", path=source_path.relative_to(ROOT).as_posix(),
+                )
+                if request.get("status") not in {"published", "ignored"}:
+                    requests.append(request)
+                await rag.ingest(source=str(DATA_DIR / filename), strict_mapping=True)
+            for doc_path in sorted(DOCS_DIR.glob("*.md")):
+                request = enqueue_source(
+                    doc_path.stem, doc_path.read_bytes().decode("utf-8"),
+                    allow_create=True, origin="synthetic",
+                    path=doc_path.relative_to(ROOT).as_posix(),
+                )
+                if request.get("status") in {"published", "ignored"}:
+                    continue
+                requests.append(request)
+                await rag.update(
+                    text=request["text"], document_id=request["document_id"],
+                    extractor=_extractor(llm), if_missing="ingest",
+                )
+            await rag.finalize(resolve=True, judge=True, judge_vote=True)
+            _publish_aliases(graph, aliases)
+        _set_schema_state(graph, schema_ready=True)
+        for request in requests:
+            publish_source_request(request["request_id"])
+    except Exception as exc:
+        for request in requests:
+            _fail_request(request)
+        _set_schema_state(graph, schema_ready=False, error=str(exc))
+        raise
 
-    # Structured teams and relationships
-    with (DATA_DIR / "teams.csv").open(encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            graph.query(
-                "MERGE (t:Team {team_id: $team_id}) SET t.name = $name",
-                {"team_id": row["team_id"], "name": row["name"]},
-            )
 
-    # Link people to teams and teams to services
-    graph.query(
-        "MATCH (p:Person), (t:Team) WHERE p.team = t.name "
-        "MERGE (p)-[:MEMBER_OF]->(t)"
-    )
-    graph.query(
-        "MATCH (s:Service), (t:Team) WHERE s.owner_team = t.name "
-        "MERGE (t)-[:OWNS]->(s)"
-    )
+async def ingest_company_brain(*, wipe: bool = False) -> dict[str, Any]:
+    """Build Company Brain by initializing and draining the one source worker."""
+    from seed.sources import run_source_worker
 
-    # Structured aliases
-    with (DATA_DIR / "aliases.csv").open(encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            graph.query(
-                "MERGE (a:Alias {name: $alias}) "
-                "WITH a MATCH (s:Service {service_id: $service_id}) "
-                "MERGE (a)-[:POINTS_TO]->(s)",
-                {"alias": row["alias"], "service_id": row["service_id"]},
-            )
+    config = get_config()
+    graph = _company_graph(config)
+    manifest = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
+    async def initialize() -> None:
+        if wipe:
+            await asyncio.to_thread(graph.delete)
+        await _initialize_company_schema()
 
-    # 4. Link canonical authored and about relationships for scenario documents
-    # Alice authored RFC-001, PR-101, Ticket-101, Ticket-102, Slack-001
-    graph.query(
-        "MATCH (p:Person {person_id: 'user-alice'}), (s:Service {service_id: 'payments-primary'}) "
-        "MATCH (d:Document) WHERE d.id IN ['rfc-001-payments-failover', 'ticket-PAY-101', 'ticket-PAY-102', 'pr-101-payments-queue-routing', 'slack-001-failover-budget'] "
-        "MERGE (p)-[:AUTHORED]->(d) "
-        "MERGE (d)-[:ABOUT]->(s)"
-    )
-    graph.query(
-        "MATCH (p:Person {person_id: 'user-alice'}), (s:Service {service_id: 'payments-primary'}) "
-        "MATCH (d:Document) WHERE d.id IN ['ticket-PAY-101', 'ticket-PAY-102'] "
-        "MERGE (p)-[:RESOLVED]->(d)"
+    await run_source_worker(
+        processor=apply_sdk_source,
+        once=True,
+        initialize=initialize,
     )
 
-    # Carol authored RFC-002, PR-102, Ticket-201
-    graph.query(
-        "MATCH (p:Person {person_id: 'user-carol'}), (s:Service {service_id: 'checkout'}) "
-        "MATCH (d:Document) WHERE d.id IN ['rfc-002-checkout-resilience', 'ticket-CHK-201', 'pr-102-checkout-upstream-circuit-breaker'] "
-        "MERGE (p)-[:AUTHORED]->(d) "
-        "MERGE (d)-[:ABOUT]->(s)"
-    )
-
-    # 5. Mark Meta as ready=true
-    end_ts = datetime.now(timezone.utc).isoformat()
-    doc_count = graph.query("MATCH (d:Document) RETURN count(d)").result_set[0][0]
-    chunk_count = graph.query("MATCH (c:Chunk) RETURN count(c)").result_set[0][0]
-
-    graph.query(
-        "MATCH (m:Meta {id: 'company_brain_meta'}) "
-        "SET m.ready = true, "
-        "    m.hash = $hash, "
-        "    m.completed_at = $ts, "
-        "    m.documents_count = $doc_count, "
-        "    m.chunks_count = $chunk_count",
-        {
-            "hash": manifest["manifest_hash"],
-            "ts": end_ts,
-            "doc_count": doc_count,
-            "chunk_count": chunk_count,
-        },
-    )
-
+    doc_count = graph.ro_query("MATCH (d:Document) RETURN count(d)").result_set[0][0]
+    chunk_count = graph.ro_query("MATCH (c:Chunk) RETURN count(c)").result_set[0][0]
+    ready_rows = graph.ro_query(
+        "MATCH (m:Meta {id: 'company_brain_meta'}) RETURN m.ready"
+    ).result_set
     return {
-        "ready": True,
-        "graph": graph_name,
+        "ready": bool(ready_rows and ready_rows[0][0] is True),
+        "graph": graph_names().company,
         "documents": doc_count,
         "chunks": chunk_count,
+        "manifest_hash": manifest["manifest_hash"],
     }
 
 
-def is_company_brain_ready(graph_name: str = "company_brain") -> bool:
+def is_company_brain_ready() -> bool:
     config = get_config()
-    db = FalkorDB(
-        host=config["FALKORDB_HOST"],
-        port=int(config["FALKORDB_PORT"]),
-        username=config["FALKORDB_ADMIN_USERNAME"],
-        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
-    )
     try:
-        res = db.select_graph(graph_name).ro_query("MATCH (m:Meta {id: 'company_brain_meta'}) RETURN m.ready").result_set
+        res = _company_graph(config).ro_query(
+            "MATCH (m:Meta {id: 'company_brain_meta'}) RETURN m.ready"
+        ).result_set
         return bool(res and res[0][0] is True)
     except Exception:
         return False
 
 
-if __name__ == "__main__":
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--graph", default="company_brain", help="Graph name")
-    parser.add_argument("--wipe", action="store_true", help="Wipe graph before load")
+    parser.add_argument("--wipe", action="store_true", help="Explicitly wipe the configured company graph")
+    parser.add_argument("--worker", action="store_true", help="Run the serialized source worker")
     args = parser.parse_args()
+    if args.worker and args.wipe:
+        parser.error("--wipe only applies to bulk ingestion")
 
-    result = asyncio.run(ingest_company_brain(graph_name=args.graph, wipe=args.wipe))
+    if args.worker:
+        from seed.sources import run_source_worker
+
+        asyncio.run(run_source_worker(processor=apply_sdk_source))
+        return 0
+
+    result = asyncio.run(ingest_company_brain(wipe=args.wipe))
     print(f"Company Brain ingestion result: {result}")
-    sys.exit(0 if result.get("ready") else 1)
+    return 0 if result["ready"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

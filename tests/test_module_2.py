@@ -71,13 +71,13 @@ async def test_choke_points_betweenness_ranking():
 
 
 @pytest.mark.asyncio
-async def test_unready_knowledge_tool_returns_not_ready():
-    """Verify that unseeded company brain tools return NOT_READY rather than hallucinated facts."""
-    from unittest.mock import patch
-    with patch("agents.knowledge.check_brain_ready", return_value=False):
-        result = await who_owns("payments-primary")
-        assert result.status == "NOT_READY"
-        assert "not yet seeded" in result.data.lower()
+async def test_unpublished_company_graph_abstains():
+    """Withdrawn graph readiness must prevent an ownership answer."""
+    from seed.sources import _graph
+    _graph().query("MATCH (m:Meta {id:'company_brain_meta'}) SET m.ready=false")
+    result = await who_owns("payments-primary")
+    assert result.status == "NOT_READY"
+    assert result.evidence == {}
 
 @pytest.mark.asyncio
 async def test_injection_syntax_rejected_at_validation():

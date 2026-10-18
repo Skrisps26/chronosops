@@ -1,41 +1,29 @@
 """Constrained Ontology definition for ChronosOps Company Brain."""
 from __future__ import annotations
-
 from pathlib import Path
-from graphrag_sdk import Attribute, Column, Entity, Ontology, Relation, TableMapping
 
+from graphrag_sdk import Attribute, Column, Entity, Link, Ontology, Relation, TableMapping
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "seed" / "data"
 
 
 def get_company_ontology() -> Ontology:
-    """Build and return the formal ontology for Company Brain."""
+    """Build the declared Company Brain ontology and structured source mappings."""
     entities = [
         Entity(
             label="Service",
-            description="Production service or microservice with canonical service_id.",
-            properties=[
-                Attribute(name="service_id", type="STRING"),
-                Attribute(name="owner_team", type="STRING"),
-                Attribute(name="environment", type="STRING"),
-                Attribute(name="tier", type="STRING"),
-            ],
+            description="Production service or microservice from services.csv.",
+            properties=[],
         ),
         Entity(
             label="Person",
-            description="Company engineer, lead, or operator.",
-            properties=[
-                Attribute(name="person_id", type="STRING"),
-                Attribute(name="email", type="STRING"),
-                Attribute(name="team", type="STRING"),
-            ],
+            description="Company engineer, lead, or operator from people.csv.",
+            properties=[],
         ),
         Entity(
             label="Team",
-            description="Engineering squad or business unit.",
-            properties=[
-                Attribute(name="team_id", type="STRING"),
-            ],
+            description="Engineering squad or business unit from teams.csv.",
+            properties=[],
         ),
         Entity(
             label="Decision",
@@ -72,7 +60,7 @@ def get_company_ontology() -> Ontology:
 
     relations = [
         Relation(label="MEMBER_OF", description="Person is a member of a Team", patterns=[("Person", "Team")]),
-        Relation(label="OWNS", description="Team owns a Service", patterns=[("Team", "Service")]),
+        Relation(label="OWNED_BY", description="Service is owned by a Team", patterns=[("Service", "Team")]),
         Relation(
             label="AUTHORED",
             description="Person authored a document, ticket, PR, or Slack thread",
@@ -100,29 +88,37 @@ def get_company_ontology() -> Ontology:
         TableMapping(
             source=str(DATA_DIR / "services.csv"),
             label="Service",
-            key="service_id",
+            # entity_key is SDK reconciliation state.  The canonical ID is a
+            # separately declared property, written by the SDK as
+            # services__service_id.
+            key="service_name",
             name="service_name",
             properties={
+                "service_id": Column("service_id", "STRING"),
                 "environment": Column("environment", "STRING"),
                 "owner_team": Column("owner_team", "STRING"),
                 "tier": Column("tier", "STRING"),
             },
+            links=[Link("OWNED_BY", to="Team", by="owner_team")],
         ),
         TableMapping(
             source=str(DATA_DIR / "people.csv"),
             label="Person",
-            key="person_id",
+            key="name",
             name="name",
             properties={
+                "person_id": Column("person_id", "STRING"),
                 "email": Column("email", "STRING"),
                 "team": Column("team", "STRING"),
             },
+            links=[Link("MEMBER_OF", to="Team", by="team")],
         ),
         TableMapping(
             source=str(DATA_DIR / "teams.csv"),
             label="Team",
-            key="team_id",
+            key="name",
             name="name",
+            properties={"team_id": Column("team_id", "STRING")},
         ),
     ]
 

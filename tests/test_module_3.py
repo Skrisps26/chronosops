@@ -7,7 +7,6 @@ from agents.knowledge import (
     bus_factor,
     decision_provenance,
     resolve_service_id,
-    update_company_document,
     who_owns,
 )
 
@@ -81,43 +80,3 @@ async def test_nonexistent_service_returns_not_found():
     assert (await decision_provenance("unknown-service-abc")).status == "NOT_FOUND"
 
 
-@pytest.mark.bedrock_live
-@pytest.mark.asyncio
-async def test_document_update_replaces_evidence_and_preserves_unrelated():
-    """Verify that updating a document updates citation text and preserves unrelated entities."""
-    from pathlib import Path
-    root = Path(__file__).resolve().parents[1]
-    orig_path = root / "seed" / "data" / "docs" / "rfc-001-payments-failover.md"
-    orig_text = orig_path.read_text(encoding="utf-8")
-
-    updated_rfc = """---
-document_id: "rfc-001-payments-failover"
-title: "RFC-001: Payments Contingency (Revised)"
-author: "user-alice"
-service_id: "payments-primary"
-version: "2.0-approved"
----
-# RFC-001: Revised Payments Failover
-
-Decision: Queue failover was selected based on rollback speed under the same cost cap of 12 units.
-"""
-    try:
-        # 1. Perform single document update
-        up_res = await update_company_document("rfc-001-payments-failover", updated_rfc)
-        assert up_res["status"] == "updated"
-
-        # 2. Check that decision provenance reflects updated evidence
-        prov = await decision_provenance("payments-primary")
-        assert prov.status == "OK"
-        rfc_source = next(s for s in prov.data["sources"] if isinstance(s, dict) and s.get("document_id") == "rfc-001-payments-failover")
-        chunk_text = rfc_source["chunks"][0]["text"]
-        assert "rollback speed" in chunk_text
-
-        # 3. Check that unrelated service ownership and members were preserved intact
-        chk_res = await who_owns("checkout")
-        assert chk_res.status == "OK"
-        assert chk_res.data["owner_team"] == "Checkout"
-        assert any(m.get("person_id") == "user-carol" or "carol" in str(m.get("name", "")).lower() for m in chk_res.data["team_members"])
-    finally:
-        # Restore fixture through the same update path as mandated by PLAN.md
-        await update_company_document("rfc-001-payments-failover", orig_text)
