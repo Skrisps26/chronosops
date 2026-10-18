@@ -48,6 +48,13 @@
 - Notification root versions exclude `recorded_at`, because alert ingestion updates that delivery timestamp on retries. Outcome versions bind the current persisted approval/action. Version identity is included in the externally visible message, so a prior same-status receipt cannot reconcile a later version. Only documented `chat.postMessage` parameters are sent; no client-provided message ID is treated as an exactly-once guarantee. Reference: https://docs.slack.dev/reference/methods/chat.postMessage/.
 - Transport state comes from the SDK's actual `is_connected()` result, not worker liveness. TaskGroup supervises the socket, durable inbox, notification consumer and the one file-locked SDK writer; a failed competing writer does not overwrite the active connector's state. Reconnect reconciliation is bounded to 4x15 top-level messages, with gaps/truncation explicit. Metadata-only edits retain the message's actual content version rather than the delivery timestamp. Reference: https://docs.slack.dev/reference/events/message/message_changed/.
 
+## Correctness repair: proposal authority
+
+- `agents.safety.validate_proposal` is the shared deterministic authority. It produces recursively immutable facts and a canonical stable-fact hash. Rationale, query latency and alert-delivery `recorded_at` are not approval identity.
+- Real proposals require Acme, exact monitored incident/deployment and saved failed probes, healthy exporter, current failed monitoring, restricted-role AWS target/document refresh, current published/remote Slack evidence and a matching active watchdog with at least120 seconds remaining. Slack is evidence, never runbook authority. Real recovery remains globally disabled.
+- Simulation retains bounded official `algo.SPpaths` candidates, then checks actual node/edge health, recomputed cost and compatible tenant-private exclusions. No eligible result within the first five candidates does not prove global impossibility. Trusted topology initialization creates known empty tenant memory graphs; a failed memory read is not an empty exclusion set.
+- Approval identity uses an operational native uniqueness constraint and deterministic tenant/incident/evidence key. Initial facts/expiry are immutable; changed evidence requires another approval. Concurrent command claiming and post-presentation revalidation belong to the following execution gate and are not implied by this proposal cutover.
+
 ## Sources
 
 - AWS MCP setup: https://docs.aws.amazon.com/agent-toolkit/latest/userguide/getting-started-aws-mcp-server.html

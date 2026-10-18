@@ -99,6 +99,14 @@ Reconciliation requires one matching actual bot/channel/versioned-text/thread re
 
 
 
+### Evidence-bound proposals
+
+Proposal authority is deterministic and separate from generated explanations. Simulation routes must have healthy nodes/edges, current tenant-private exclusion evidence and recomputed cost within the cap. Search is bounded to the first five candidate paths and depth5; a bounded miss is not proof that no route exists.
+
+Real proposals require the exact monitored incident, saved failed probes with a healthy exporter, current failed monitoring, refreshed restricted-role EC2/SSM/runbook evidence, current cited Slack evidence and a matching watchdog with at least120 seconds remaining. HTTP status0 can be a genuine connection failure; command acceptance is never recovery proof.
+
+Approvals bind immutable target/document version/hash, topology, source versions, observation IDs and a five-minute expiry. Repeating the same presentation does not renew that expiry. The local proposal gate passed194 isolated tests and an actual LangGraph/MCP smoke; atomic execution/revalidation and the live incident gate are not yet passed.
+
 ### Disposable workload safety
 
 Real recovery stays disabled with `REAL_RECOVERY_ENABLED=false`. Deployment, fault injection and teardown are operator-only; the app must never mount the administrator operator profile.

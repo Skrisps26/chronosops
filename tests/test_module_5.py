@@ -110,7 +110,7 @@ async def test_procedural_workflow_formation_after_three_successes():
     ).result_set
     assert len(edges) >= 5
 
-    # Execute learned procedural workflow (zero LLM calls)
+    # An unknown service cannot borrow a valid payments route to obtain approval.
     playbook_res = await execute_learned_procedural_workflow(
         incident_id=f"inc-playbook-{service_id}",
         service_id=service_id,
@@ -120,8 +120,8 @@ async def test_procedural_workflow_formation_after_three_successes():
     )
     assert playbook_res["procedural_execution"] is True
     assert playbook_res["llm_calls_made"] == 0
-    assert playbook_res["status"] == "awaiting_approval"
-    assert playbook_res["approval_id"] is not None
+    assert playbook_res["status"] == "failed"
+    assert playbook_res["approval_id"] is None
 
 
 @pytest.mark.asyncio

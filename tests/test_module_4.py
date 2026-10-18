@@ -111,10 +111,9 @@ async def test_simulation_workflow_budget_rejection(workflow_app):
     assert len(state.rejected_routes) >= 2
 
 
-@pytest.mark.live_demo
 @pytest.mark.asyncio
-async def test_real_workflow_proposal_and_governance(workflow_app):
-    """Verify real execution mode gathers ownership + Slack notice and proposes restart_service."""
+async def test_real_workflow_without_live_evidence_refuses(workflow_app):
+    """Synthetic company sources cannot authorize a real recovery proposal."""
     inc_id = f"inc-real-{uuid.uuid4().hex[:8]}"
     initial_state = IncidentState(
         incident_id=inc_id,
@@ -126,10 +125,9 @@ async def test_real_workflow_proposal_and_governance(workflow_app):
     final_state_dict = await workflow_app.ainvoke(initial_state)
     state = IncidentState(**final_state_dict)
 
-    assert state.status == "awaiting_approval"
-    assert state.proposed_action["action_kind"] == "restart_service"
-    assert state.evidence["ownership"]["owner_team"] == "Payments"
-    assert state.approval_id is not None
+    assert state.status == "failed"
+    assert not state.proposed_action
+    assert state.approval_id is None
 
 
 @pytest.mark.asyncio

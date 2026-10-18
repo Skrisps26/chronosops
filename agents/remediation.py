@@ -1,88 +1,55 @@
-"""Remediation node: formulates recovery options based on graph algorithms and evidence."""
+"""Create recommendations only from current graph candidates and captured evidence."""
 from __future__ import annotations
 
 from typing import Any
 
 from agents.tools import failover_routes
 from agents.workflow import IncidentState
-from scripts.demo_stack import STACK_ARTIFACT
 
 
 async def remediation_node(state: IncidentState) -> dict[str, Any]:
     turn = state.turn_count + 1
 
+    def refuse(reason: str, rejected: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        return {"status": "failed", "proposed_action": {}, "turn_count": turn,
+                "error_message": reason, "rejected_routes": rejected or []}
+
+    if state.status == "failed":
+        return {"turn_count": turn, "proposed_action": {}}
     if state.execution_mode == "simulation":
-        # Graph algorithms route computation via SPpaths
-        fo_res = await failover_routes(
-            source="checkout",
-            target="payments-backup",
-            max_cost=state.max_cost,
-            tenant=state.tenant_id,
-        )
-
-        if fo_res.status == "OK":
-            rec = fo_res.data
-            proposed = {
-                "action_kind": "simulate_failover",
-                "route": rec.get("recommended_route"),
-                "latency_ms": rec.get("latency_ms"),
-                "cost": rec.get("cost"),
-                "rationale": f"Selected safe alternative route {rec.get('recommended_route')} within cost cap {state.max_cost}",
-            }
-            return {
-                "candidates": fo_res.evidence.get("safe_routes", []),
-                "rejected_routes": fo_res.evidence.get("rejected_routes", []),
-                "proposed_action": proposed,
-                "turn_count": turn,
-                "status": "investigating",
-            }
-        else:
-            return {
-                "candidates": [],
-                "rejected_routes": fo_res.evidence.get("rejected_routes", []),
-                "proposed_action": {},
-                "turn_count": turn,
-                "status": "failed",
-                "error_message": "No eligible route found within safety cost cap",
-            }
-
-    else:
-        # Real execution mode: evaluate live constraint evidence
-        # Check if Slack notice indicated backup was unavailable
-        slack_notice_present = False
-        provenance = state.evidence.get("provenance", {})
-        for src in provenance.get("sources", []):
-            if src.get("document_id") == "slack-004-backup-maintenance":
-                slack_notice_present = True
-                break
-
-        # Also resolve actual StartDocumentName from stack outputs if deployed
-        doc_name = "chronosops-demo-StartNginx"
-        inst_id = None
-        if STACK_ARTIFACT.is_file():
-            try:
-                import json
-                stack_info = json.loads(STACK_ARTIFACT.read_text(encoding="utf-8"))
-                doc_name = stack_info.get("outputs", {}).get("StartDocumentName", doc_name)
-                inst_id = stack_info.get("outputs", {}).get("InstanceId")
-            except Exception:
-                pass
-
-        proposed = {
-            "action_kind": "restart_service",
-            "service_id": state.service_id,
-            "instance_id": inst_id,
-            "document_name": doc_name,
-            "rationale": (
-                "Verified service failure via HTTP probes. Secondary standby unavailable "
-                "for live traffic shifting per Slack operational policy (slack-004). "
-                "Restarting primary instance service via reviewed SSM document."
-            ),
-            "slack_policy_cited": slack_notice_present,
-        }
-
+        result = await failover_routes("checkout", "payments-backup", state.max_cost, tenant=state.tenant_id)
+        if result.status != "OK":
+            return refuse("route_" + result.status.lower(), result.evidence.get("rejected_routes", []))
+        if not state.topology_version or result.data.get("topology_version") != state.topology_version:
+            return refuse("topology_changed_during_investigation")
         return {
-            "proposed_action": proposed,
-            "turn_count": turn,
-            "status": "investigating",
+            "status": "investigating", "turn_count": turn,
+            "candidates": result.evidence.get("safe_routes", []),
+            "rejected_routes": result.evidence.get("rejected_routes", []),
+            "evidence": {**state.evidence, "routes": result.model_dump(mode="json")},
+            "proposed_action": {"action_kind": "simulate_failover", "source": "checkout",
+                                "target": "payments-backup", "route": result.data["recommended_route"],
+                                "latency_ms": result.data["latency_ms"], "cost": result.data["cost"],
+                                "rationale": "Graph-returned healthy route within the declared search bounds and cost cap."},
         }
+
+    binding = state.deployment_binding
+    required = ("deployment_id", "service_id", "instance_id", "document_name", "document_version", "document_hash")
+    if not all(binding.get(field) for field in required) or binding["service_id"] != state.service_id:
+        return refuse("verified_restart_binding_missing")
+    policy_sources = sorted(document_id for document_id, version in state.evidence_versions.items()
+                            if version.get("origin") == "slack" and version.get("service_id") == state.service_id)
+    if not policy_sources or not state.observation_ids:
+        return refuse("live_policy_or_failed_probe_evidence_missing")
+    return {
+        "status": "investigating", "turn_count": turn,
+        "proposed_action": {
+            "action_kind": "restart_service", "service_id": state.service_id,
+            "deployment_id": binding["deployment_id"], "instance_id": binding["instance_id"],
+            "document_name": binding["document_name"], "document_version": binding["document_version"],
+            "document_hash": binding["document_hash"], "policy_source_ids": policy_sources,
+            "rationale": "Captured failed HTTP observations " + ", ".join(state.observation_ids)
+                         + "; stored restart binding " + binding["document_name"] + "@" + str(binding["document_version"])
+                         + "; current cited Slack sources " + ", ".join(policy_sources) + ". Safety validation is required.",
+        },
+    }

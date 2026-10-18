@@ -12,6 +12,7 @@ from typing import Any
 
 from dotenv import dotenv_values
 from falkordb import FalkorDB
+from agents.settings import TENANTS, graph_names
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_FILE = ROOT / "seed" / "manifest.json"
@@ -32,7 +33,7 @@ def ensure_application_constraints(graph: Any, *, company: bool = False) -> None
     """Install application identity constraints using trusted seeding credentials."""
     identities = (("SlackInbox", ("event_id",)), ("SourceRecord", ("document_id",)),
                   ("SourceRequest", ("request_id",)), ("SlackConnector", ("tenant_id", "connector_id"))) \
-        if company else (("SlackNotification", ("outbox_key",)),)
+        if company else (("SlackNotification", ("outbox_key",)), ("ApprovalRecord", ("approval_id",)))
     for label, properties in identities:
         existing = [item for item in graph.list_constraints()
                     if item["type"] == "UNIQUE" and item["label"] == label
@@ -149,6 +150,16 @@ def load_topology(
             f"Counts validation failed! Observed: services={svc_count}, deps={dep_count}, routes={route_count}. "
             f"Expected: services={expected_services}, deps={expected_deps}, routes={expected_routes}."
         )
+
+    # A successfully initialized namespace has known empty tenant-private memory.
+    # Reader failures must never be interpreted as an empty exclusion history.
+    names = graph_names()
+    if graph_name == names.topology:
+        for tenant in sorted(TENANTS):
+            db.select_graph(names.memory_for(tenant)).query(
+                "MERGE (m:MemoryMeta {id:'memory_meta'}) "
+                "ON CREATE SET m.schema_version=1, m.ready=true"
+            )
 
     # 6. Mark Meta as ready=true only upon successful verification
     end_ts = datetime.now(timezone.utc).isoformat()

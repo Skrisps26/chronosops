@@ -29,24 +29,23 @@ MATCH (dependent:Service)-[:DEPENDS_ON*6..6]->(failed:Service {service_id: $serv
 RETURN count(dependent) AS count
 """
 
-# Failover candidate queries via algo.SPpaths
-FAILOVER_ROUTES_UNCONSTRAINED = """
-MATCH (s:Service {service_id: $source}), (t:Service {service_id: $target})
-CALL algo.SPpaths({
-  sourceNode: s,
-  targetNode: t,
-  relTypes: ['ROUTES_TO'],
-  weightProp: 'latency_ms',
-  costProp: 'cost',
-  maxLen: 5,
-  relDirection: 'outgoing',
-  pathCount: 5
-})
-YIELD path, pathWeight, pathCost
-RETURN [n IN nodes(path) | n.service_id] AS route, pathWeight AS latency_ms, pathCost AS cost
+# Failover route evidence: fixed 3-second callers validate endpoint metadata,
+# then project the same first five SPpaths candidates with every node and edge
+# value needed to make an eligibility decision in Python.
+FAILOVER_ROUTE_CONTEXT = """
+MATCH (m:Meta {id: 'ops_topology_meta'})
+OPTIONAL MATCH (s:Service {service_id: $source})
+OPTIONAL MATCH (t:Service {service_id: $target})
+RETURN m.ready AS topology_ready,
+       m.hash AS topology_version,
+       s.service_id AS source_id,
+       s.health AS source_health,
+       t.service_id AS target_id,
+       t.health AS target_health
 """
 
-FAILOVER_ROUTES_CONSTRAINED = """
+FAILOVER_ROUTE_CANDIDATES = """
+MATCH (m:Meta {id: 'ops_topology_meta'})
 MATCH (s:Service {service_id: $source}), (t:Service {service_id: $target})
 CALL algo.SPpaths({
   sourceNode: s,
@@ -54,13 +53,34 @@ CALL algo.SPpaths({
   relTypes: ['ROUTES_TO'],
   weightProp: 'latency_ms',
   costProp: 'cost',
-  maxCost: $max_cost,
   maxLen: 5,
   relDirection: 'outgoing',
   pathCount: 5
 })
 YIELD path, pathWeight, pathCost
-RETURN [n IN nodes(path) | n.service_id] AS route, pathWeight AS latency_ms, pathCost AS cost
+RETURN m.hash AS topology_version,
+       [n IN nodes(path) | n.service_id] AS route,
+       [n IN nodes(path) | n.health] AS node_health,
+       [r IN relationships(path) | r.health] AS edge_health,
+       [r IN relationships(path) | r.cost] AS edge_costs,
+       [r IN relationships(path) | r.latency_ms] AS edge_latency_ms,
+       pathWeight AS latency_ms,
+       pathCost AS cost
+ORDER BY latency_ms ASC, cost ASC
+"""
+
+MEMORY_ROUTE_EXCLUSIONS = """
+MATCH (f:SemanticFact {active: true})
+RETURN f.id AS fact_id,
+       f.subject AS subject,
+       f.predicate AS predicate,
+       f.object AS object,
+       f.reason AS reason,
+       f.topology_version AS topology_version,
+       f.max_cost AS max_cost,
+       f.source_version AS source_version
+ORDER BY fact_id ASC
+LIMIT 100
 """
 
 # Choke points: betweenness centrality on DEPENDS_ON network

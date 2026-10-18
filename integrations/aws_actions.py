@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import asyncio
-import os
-from datetime import datetime
+import hashlib
+import json
 import time
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Mapping
 
 import boto3
 from botocore.config import Config
-from integrations.deployment import bound_deployment
+from integrations.deployment import START_COMMANDS, bound_deployment
 from scripts.demo_stack import get_config
 
 
@@ -35,8 +36,112 @@ class AwsRecoveryClient:
         # CRITICAL SAFETY: Single attempt mutation to avoid duplicate executions
         self.mutation_config = Config(retries={"total_max_attempts": 1, "mode": "standard"})
         self.ssm_mutation = session.client("ssm", config=self.mutation_config)
-        self.ssm_read = session.client("ssm")
-        self.sts = session.client("sts")
+        self.read_config = Config(
+            connect_timeout=5,
+            read_timeout=10,
+            retries={"total_max_attempts": 2, "mode": "standard"},
+        )
+        self.ssm_read = session.client("ssm", config=self.read_config)
+        self.ec2_read = session.client("ec2", config=self.read_config)
+        self.sts = session.client("sts", config=self.read_config)
+
+    async def refresh_binding(self, binding: Mapping[str, Any]) -> dict[str, Any]:
+        """Re-read the exact pinned recovery target using only recovery credentials."""
+        required = (
+            "deployment_id",
+            "tenant_id",
+            "service_id",
+            "account_id",
+            "region",
+            "instance_id",
+            "stack_id",
+            "document_name",
+            "document_version",
+            "document_hash",
+            "recovery_role_arn",
+            "operator",
+            "expires_at",
+        )
+        if any(not isinstance(binding.get(field), str) or not binding[field] for field in required):
+            raise RecoveryExecutionError("Published deployment binding is incomplete")
+        if binding["tenant_id"] != "acme" or binding["region"] != self.region:
+            raise RecoveryExecutionError("Published deployment binding has the wrong tenant or region")
+        try:
+            expiry = datetime.fromisoformat(binding["expires_at"].replace("Z", "+00:00"))
+        except ValueError as error:
+            raise RecoveryExecutionError("Published deployment expiration is invalid") from error
+        if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
+            raise RecoveryExecutionError("Published deployment has expired")
+
+        def _refresh() -> dict[str, Any]:
+            ec2 = self.ec2_read
+            ssm = self.ssm_read
+            identity = self.sts.get_caller_identity()
+            role_name = binding["recovery_role_arn"].rsplit("/", 1)[-1]
+            expected_role = f"arn:aws:sts::{binding['account_id']}:assumed-role/{role_name}/"
+            if identity.get("Account") != binding["account_id"] or not str(identity.get("Arn", "")).startswith(expected_role):
+                raise RecoveryExecutionError("Recovery credentials are not the bound restricted role")
+
+            reservations = ec2.describe_instances(InstanceIds=[binding["instance_id"]]).get("Reservations", [])
+            instances = [instance for reservation in reservations for instance in reservation.get("Instances", [])]
+            if len(instances) != 1:
+                raise RecoveryExecutionError("Expected exactly one bound EC2 instance")
+            instance = instances[0]
+            tags = {tag.get("Key"): tag.get("Value") for tag in instance.get("Tags", [])}
+            expected_tags = {
+                "Project": "ChronosOps",
+                "Environment": "demo",
+                "Service": binding["service_id"],
+                "aws:cloudformation:stack-id": binding["stack_id"],
+                "Operator": binding["operator"],
+                "ExpiresAt": binding["expires_at"],
+            }
+            if instance.get("InstanceId") != binding["instance_id"] or instance.get("State", {}).get("Name") != "running" or any(
+                tags.get(key) != value for key, value in expected_tags.items()
+            ):
+                raise RecoveryExecutionError("Bound EC2 instance is not the running controlled target")
+            managed = ssm.describe_instance_information(
+                Filters=[{"Key": "InstanceIds", "Values": [binding["instance_id"]]}]
+            ).get("InstanceInformationList", [])
+            if len(managed) != 1 or managed[0].get("InstanceId") != binding["instance_id"] or managed[0].get("PingStatus") != "Online":
+                raise RecoveryExecutionError("Bound SSM agent is not online")
+            document = ssm.get_document(
+                Name=binding["document_name"],
+                DocumentVersion=binding["document_version"],
+                DocumentFormat="JSON",
+            )
+            returned_version = str(document.get("DocumentVersion", ""))
+            content = document.get("Content")
+            if returned_version != binding["document_version"] or not returned_version.isdigit() or not isinstance(content, str):
+                raise RecoveryExecutionError("Pinned SSM document version is invalid")
+            if hashlib.sha256(content.encode("utf-8")).hexdigest() != binding["document_hash"]:
+                raise RecoveryExecutionError("Pinned SSM document content changed")
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError as error:
+                raise RecoveryExecutionError("Pinned SSM document JSON is invalid") from error
+            steps = parsed.get("mainSteps")
+            if (
+                parsed.get("schemaVersion") != "2.2"
+                or parsed.get("parameters")
+                or not isinstance(steps, list)
+                or len(steps) != 1
+                or steps[0].get("name") != "startNginx"
+                or steps[0].get("action") != "aws:runShellScript"
+                or steps[0].get("inputs", {}).get("runCommand") != START_COMMANDS
+            ):
+                raise RecoveryExecutionError("Pinned SSM document is not the approved parameterless restart")
+            return {
+                "account_id": identity["Account"],
+                "region": self.region,
+                "instance_id": binding["instance_id"],
+                "document_name": binding["document_name"],
+                "document_version": returned_version,
+                "document_hash": binding["document_hash"],
+                "recovery_role_arn": binding["recovery_role_arn"],
+            }
+
+        return await asyncio.to_thread(_refresh)
 
     async def execute_restart(
         self,

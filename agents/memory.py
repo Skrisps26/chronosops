@@ -342,56 +342,24 @@ async def execute_learned_procedural_workflow(
     execution_mode: str = "simulation",
     max_cost: int = 12,
 ) -> dict[str, Any]:
-    """Execute fixed procedural playbook without LLM planning calls, enforcing current safety and approval."""
-    # Step 1: retrieve memory
-    memory = await retrieve_tenant_memory(service_id=service_id, tenant_id=tenant_id)
-
-    # Step 2: blast radius
-    from agents.tools import blast_radius
-    br_res = await blast_radius(service_id, tenant=tenant_id)
-
-    # Step 3: failover routes (simulation) or restart proposal (real)
-    if execution_mode == "simulation":
-        from agents.tools import failover_routes
-        fo_res = await failover_routes(source="checkout", target="payments-backup", max_cost=max_cost, tenant=tenant_id)
-        if fo_res.status != "OK":
-            return {"status": "failed", "reason": "No safe route found"}
-        rec = fo_res.data
-        proposed = {
-            "action_kind": "simulate_failover",
-            "route": rec.get("recommended_route"),
-            "latency_ms": rec.get("latency_ms"),
-            "cost": rec.get("cost"),
-            "rationale": "Learned deterministic workflow executed without LLM planning.",
-        }
-    else:
-        proposed = {
-            "action_kind": "restart_service",
-            "service_id": service_id,
-            "document_name": "chronosops-demo-StartNginx",
-            "rationale": "Learned deterministic workflow executed without LLM planning.",
-        }
-
-    # Step 4: Governance validator creates approval record
+    """Run the deterministic proposal nodes with current evidence and approval."""
     from agents.governance import governance_node
-    from agents.workflow import IncidentState
+    from agents.remediation import remediation_node
+    from agents.triage import triage_node
+    from agents.workflow import IncidentState, create_incident_workflow
 
+    memory = await retrieve_tenant_memory(service_id=service_id, tenant_id=tenant_id)
     state = IncidentState(
-        incident_id=incident_id,
-        tenant_id=tenant_id,
-        service_id=service_id,
-        execution_mode=execution_mode,
-        max_cost=max_cost,
-        evidence={"memory": memory, "blast_radius": br_res.data},
-        proposed_action=proposed,
+        incident_id=incident_id, tenant_id=tenant_id, service_id=service_id,
+        execution_mode=execution_mode, max_cost=max_cost, evidence={"memory": memory},
     )
-
-    gov_res = await governance_node(state)
+    workflow = create_incident_workflow(triage_node, remediation_node, governance_node)
+    result = await workflow.ainvoke(state)
     return {
-        "status": gov_res.get("status", "awaiting_approval"),
-        "approval_id": gov_res.get("approval_id"),
+        "status": result["status"],
+        "approval_id": result.get("approval_id"),
         "incident_id": incident_id,
         "procedural_execution": True,
         "llm_calls_made": 0,
-        "proposed_action": proposed,
+        "proposed_action": result["proposed_action"],
     }

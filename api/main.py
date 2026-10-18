@@ -119,6 +119,7 @@ def _create_simulation_ownership(
         "               created_at: $created_at}) "
         "MERGE (i:Incident {incident_id: $incident_id, tenant_id: $tenant_id}) "
         "SET i.service_id = $service_id, i.status = 'investigating', "
+        "    i.execution_mode='simulation',i.incident_type='simulated_failover',i.origin='synthetic', "
         "    i.starts_at = $created_at "
         "MERGE (s)-[:HAS_RUN]->(r) "
         "MERGE (r)-[:FOR_INCIDENT]->(i)",

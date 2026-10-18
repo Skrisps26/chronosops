@@ -27,8 +27,15 @@ class IncidentState(BaseModel):
     service_id: str
     execution_mode: ExecutionMode = "simulation"
     status: IncidentStatus = "investigating"
-    topology_version: str = "v1.0"
+    topology_version: str = ""
     max_cost: int = 12
+    incident_type: str = ""
+    deployment_binding: dict[str, Any] = Field(default_factory=dict)
+    runbook_binding: dict[str, Any] = Field(default_factory=dict)
+    fault_window: dict[str, Any] = Field(default_factory=dict)
+    observation_ids: list[str] = Field(default_factory=list)
+    evidence_versions: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    evidence_validated_at: str | None = None
 
     # Evidence & Agent outputs
     evidence: dict[str, Any] = Field(default_factory=dict)
