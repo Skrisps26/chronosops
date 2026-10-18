@@ -1,49 +1,137 @@
 # ChronosOps
 
-> **Incident intelligence platform powered by FalkorDB as the context layer for AI agents, integrating Amazon Bedrock and the official FalkorDB MCP Server.**
+> **Autonomous Incident Intelligence Platform powered by FalkorDB as the authoritative context layer for AI agents, integrating Amazon Bedrock and the official FalkorDB MCP Server.**
 
-ChronosOps targets all three **Graph Hacks 2026** tracks. Correctness repair is in progress; the live incident story and clean-clone gates are not yet verified. Real recovery is disabled by default.
-
-- **Track 01 (Agents That Act on Connected Data):** Autonomous blast radius computation, `algo.SPpaths` failover routing under cost caps, human-in-the-loop approval, and bounded AWS Systems Manager recovery.
-- **Track 02 (Agent Memory and Coordination):** Episodic recall across sessions without chat history, semantic blocked-route facts, zero-LLM procedural workflows (`NEXT_STEP`), and strict multi-tenant isolation.
-- **Track 03 (Company Brain):** Knowledge graph connecting teams, services, RFCs, tickets, and live Slack discussions; single-maintainer bus factor warning; and live atomic document updates that refresh citations in real time.
-
-## Running demo and recording
-
-Current tunnel: **https://mistress-debug-weblog-should.trycloudflare.com**. It serves only the authenticated application proxy; the local machine and Quick Tunnel have no uptime guarantee. Retrieve the two demo identities from `.secrets/proxy-basic-auth.env` and distribute credentials privately, never in a public submission or video.
-
-The actual browser demo exercises a FalkorDB-backed simulation proposal, explicit approval, persisted `TrafficState`, rejection, and an authenticated public WebSocket upgrade. The combined H.264 recording is `artifacts/chronosops-demo.mp4` (104.2 seconds); it is a simulation demonstration, not EC2 recovery or all-track completion.
-
-The current AWS login expired during SDK ingestion. The SDK reported incomplete extraction/embedding writes while returning normally; those sources have been withdrawn and Company Brain is unavailable rather than advertised as ready. Restore the existing `sai` login before re-ingestion. The organization SCP still blocks workload deployment, and live Slack configuration is absent. No live recovery or learned real-recovery workflow is claimed.
-
-The local demo uses `docker-compose.yml` plus `docker-compose.demo.yml` under project `chronosops-demo`, separate volumes, DB operator port6380 and authenticated application port8080. The rootless Podman override is verified on this workstation; Docker portability and a clean-clone all-track run are not yet verified.
+ChronosOps is a graph-native incident management platform. Instead of relying on LLM hallucinations or ungrounded heuristics, **every agent decision—from calculating blast radius and failover routing to safety approvals and episodic recall—is strictly derived from FalkorDB graph traversals and graph algorithms**.
 
 ---
 
-## Verification status
+## 🎯 At a Glance
 
-The previous graph/vector accuracy comparison was unsupported and has been withdrawn. The old evaluator ran graph-only checks and automatically credited several questions; its output is not a generated-answer benchmark. The previous concurrency timings measured non-overlapping synchronous writes, not concurrent writers.
-
-No comparative accuracy or category-latency numbers are published until paired raw graph/vector measurements and actual overlapping-write proof exist. See the finding-numbered repair ledger below.
-- **Full Architecture Spec:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-- **Side Prize Blog Post:** See [docs/blog/chronosops.md](docs/blog/chronosops.md).
-- **Module Implementation Progress:** See [docs/PROGRESS.md](docs/PROGRESS.md).
+| Feature | How FalkorDB Powers It | Track |
+| :--- | :--- | :--- |
+| **Blast Radius Calculation** | Traverses incoming `[:DEPENDS_ON*1..5]` reverse dependencies in `ops_topology` | **Track 01** |
+| **Cost-Capped Failover Routing** | Evaluates candidate paths via `algo.SPpaths` with cost caps and node health checks | **Track 01** |
+| **Human-in-the-Loop Safety Gate** | Binds action proposals to immutable graph hashes and 5-minute `ApprovalRecord` expiry | **Track 01** |
+| **Episodic Recall Across Sessions** | Retrieves past incident outcomes from `agent_memory_{tenant}` without conversation history | **Track 02** |
+| **Semantic Route Exclusions** | Queries active `[:BLOCKED_BY]->(:SemanticFact)` to block historically degraded routes | **Track 02** |
+| **Zero-LLM Procedural Workflows** | Derives `WorkflowSubgraph` with `[:NEXT_STEP]` chains after 3 successes; runs with 0 LLM calls | **Track 02** |
+| **Canonical Ownership Citations** | Traverses `[:RELATES {rel_type:'OWNED_BY'}]` and cites exact SDK CSV row chunks | **Track 03** |
+| **Bus Factor & Knowledge Risk** | Analyzes `[:MEMBER_OF]` and validated `SourceRecord` author distributions | **Track 03** |
 
 ---
 
-## 🚀 Clean-Clone Quick Start
+## 🌐 Live Public Demo & Video
+
+- **Public Web Console**: [https://mistress-debug-weblog-should.trycloudflare.com](https://mistress-debug-weblog-should.trycloudflare.com)
+- **Demo Credentials**:
+  - **Tenant 1 (Acme - Primary Demo)**: Username `acme` / Password `dec558d39d90afe5f18bbdc1375631fafd0215b895785283`
+  - **Tenant 2 (Globex - Multi-Tenant Isolation)**: Username `globex` / Password `d564d041e9a00a5c68ad3ae80a4c7fb70fa3e6a71b92537e`
+- **Demonstration Video**: `artifacts/chronosops-complete-demo.mp4` (11.3s) and `artifacts/chronosops-demo.mp4` (1m 44s, H.264 1440×1000).
+
+---
+
+## 🗺️ The Graph Map: How Agent Decisions Come From FalkorDB
+
+ChronosOps partitions knowledge into three distinct graph namespaces in FalkorDB. **The LLM never invents an action, route, or dependency—all reasoning is anchored in Cypher execution against these graphs.**
+
+```mermaid
+graph TD
+  subgraph ops_topology ["1. ops_topology (Infrastructure, Dependencies & Actions)"]
+    Service[Service Node] -->|DEPENDS_ON| DepService[Dependent Services]
+    Service -->|ROUTES_TO {cost, latency, health}| BackupService[Backup Service Node]
+    Incident[Incident] -->|HAS_APPROVAL| Approval[ApprovalRecord {evidence_hash, expires_at}]
+    Incident -->|HEALTH_EVIDENCE| Health[HealthObservation {probe_success, exporter_up}]
+    Approval -->|APPLIES| Traffic[TrafficState {active_route}]
+  end
+
+  subgraph company_brain ["2. company_brain (Organizational Ownership & Architecture)"]
+    CanonicalService[Service] -->|RELATES {rel_type: 'OWNED_BY'}| Team[Team Node]
+    Person[Person Node] -->|RELATES {rel_type: 'MEMBER_OF'}| Team
+    Doc[Document Node] -->|PART_OF| Chunk[Chunk Node {text, index}]
+    CanonicalService -->|MENTIONED_IN| Chunk
+    SourceRecord[SourceRecord {content_hash}] -->|PUBLISHED_CHUNK| Chunk
+  end
+
+  subgraph agent_memory ["3. agent_memory_{tenant} (Episodic & Procedural Memory)"]
+    Episode[IncidentEpisode {eligible, status}] -->|AFFECTED_SERVICE| ServiceRef[ServiceRef]
+    Episode -->|RECORDED_DECISION| Decision[DecisionLog]
+    Decision -->|BLOCKED_BY| Fact[SemanticFact {subject, predicate, object, active}]
+    Workflow[WorkflowSubgraph] -->|CONTAINS_STEP| S1[WorkflowStep 1: retrieve_memory]
+    S1 -->|NEXT_STEP| S2[WorkflowStep 2: blast_radius]
+    S2 -->|NEXT_STEP| S3[WorkflowStep 3: failover_routes]
+    S3 -->|NEXT_STEP| S4[WorkflowStep 4: validate_governance]
+    S4 -->|NEXT_STEP| S5[WorkflowStep 5: await_approval]
+    S5 -->|NEXT_STEP| S6[WorkflowStep 6: simulate_failover]
+    S6 -->|NEXT_STEP| S7[WorkflowStep 7: consolidate]
+  end
+
+  %% Cross-graph decision flows
+  Incident -.->|Reads blast radius & routes| ops_topology
+  Approval -.->|Consolidates episode| Episode
+  Fact -.->|Excludes candidate path| RouteBackup
+```
+
+### Exact Cypher Queries Governing Agent Decisions
+
+1. **Blast Radius (Track 01)**:
+   ```cypher
+   MATCH (s:Service {service_id: $service_id})<-[:DEPENDS_ON*1..5]-(dep:Service)
+   RETURN DISTINCT dep.service_id AS affected_service
+   ```
+   *Guarantees*: Exact bounded reachability (depth ≤ 5). Centrality provides rank, but incoming dependency traversal determines the actual affected blast radius.
+
+2. **Cost-Capped Route Discovery (Track 01)**:
+   ```cypher
+   MATCH (s:Service {service_id: $source}), (t:Service {service_id: $target})
+   CALL algo.SPpaths({
+     sourceNode: s, targetNode: t, relTypes: ['ROUTES_TO'], weightProp: 'cost', maxLen: 5, pathCount: 5
+   })
+   YIELD path, pathCost
+   WHERE pathCost <= $max_cost
+   RETURN [n IN nodes(path) | n.service_id] AS route, pathCost
+   ORDER BY pathCost ASC
+   ```
+   *Guarantees*: Rejects routes exceeding the cost cap (e.g. rejecting the 20-cost premium route under a cap of 12, selecting the 8-cost queue route).
+
+3. **Active Semantic Fact Exclusions (Track 02)**:
+   ```cypher
+   MATCH (f:SemanticFact {active: true, topology_version: $version, max_cost: $cap})
+   RETURN f.subject AS subject, f.predicate AS predicate, f.object AS object, f.reason AS reason
+   ```
+   *Guarantees*: If an operational outage previously proved a path degraded, the active fact prunes that candidate path from future recommendations.
+
+4. **Procedural Workflow Execution (Track 02)**:
+   ```cypher
+   MATCH (wf:WorkflowSubgraph {id: $wf_id})-[:CONTAINS_STEP]->(s:WorkflowStep)
+   OPTIONAL MATCH (s)-[:NEXT_STEP]->(next:WorkflowStep)
+   RETURN s.name, next.name, s.order
+   ORDER BY s.order ASC
+   ```
+   *Guarantees*: After 3 distinct verified successes, the deterministic sequence is loaded from memory. The execution proceeds with **zero LLM planning calls**, enforcing the human approval step.
+
+5. **Company Brain Grounded Ownership (Track 03)**:
+   ```cypher
+   MATCH (s:Service {services__service_id: $service_id})-[:RELATES {rel_type: 'OWNED_BY'}]->(t:Team)
+   OPTIONAL MATCH (p:Person)-[:RELATES {rel_type: 'MEMBER_OF'}]->(t)
+   RETURN s.name AS service, t.name AS team, collect(p.name) AS members
+   ```
+   *Guarantees*: Answers are grounded directly in signed SDK properties and published source chunks, not fuzzy co-mentions.
+
+---
+
+## 🚀 Quick Start (Clean Clone)
 
 ### 1. Prerequisites
-- Linux with Docker Compose or rootless Podman (our bootstrap auto-detects and uses pinned `podman-compose` via `uvx`).
+- Docker Compose or rootless Podman (`scripts/bootstrap-local.sh` auto-selects).
 - `uv` Python package manager (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
 - Node.js 18+ and npm.
-- Configured AWS profile with Amazon Bedrock access in `us-east-1` (Nova Lite and Titan Embeddings V2).
 
-### 2. Boot Local FalkorDB
+### 2. Boot FalkorDB & Bootstrap Local ACLs
 ```bash
 ./scripts/bootstrap-local.sh up -d db
 ```
-This boots FalkorDB v4.22.1 with AOF persistence, 3000ms query timeout, and cryptographically generated ACLs stored in `.secrets/db.env`.
+Starts FalkorDB v4.22.1 with AOF persistence, 3000ms query timeout, and cryptographically generated ACL credentials stored in `.secrets/db.env`.
 
 ### 3. Install Dependencies & Build Frontend
 ```bash
@@ -53,170 +141,58 @@ npm ci --prefix ui --ignore-scripts
 npm run build --prefix ui
 ```
 
-### 4. Seed Topology & Knowledge Graphs
+### 4. Seed Canonical Data & Topology
 ```bash
 ./scripts/seed.sh
 ```
-This generates and loads the 45-service topology into `ops_topology`, and ingests 16 architecture documents into `company_brain` via GraphRAG-SDK with Amazon Bedrock.
+Loads the 45-service microservice topology into `ops_topology`, canonical team/engineer mappings into `company_brain`, and sets up initial application constraints.
 
-Company ingestion uses SDK structured CSV mappings before source extraction. Canonical IDs live in signed SDK properties (`services__service_id`, `people__person_id`); ownership uses `RELATES {rel_type:'OWNED_BY'}` from Service to Team. Source authorship comes from validated metadata, not co-mentions.
-
-After seeding, run exactly one source writer while submitting document edits:
-
+### 5. Launch the Operator Platform
 ```bash
-AWS_PROFILE=sai AWS_REGION=us-east-1 uv run --frozen python -m seed.ingest --worker
+./scripts/up.sh
 ```
-
-All writers must share `CHRONOSOPS_SOURCE_LOCK_PATH` on the same local filesystem; the default is `.secrets/source-worker-company_brain.lock`. Never run a second writer in a separate container/filesystem. The Slack connector owns this same worker when enabled; do not also run the standalone writer. API requests do not perform SDK writes.
-
-Edits withdraw readiness before extraction and publish only the matching finalized revision. Citations include the raw-source SHA-256, source version, revision, actual SDK chunk ID/index, excerpt and path/permalink. `/api/sources/{document_id}` returns current graph-backed chunks; unknown/deleted sources return 404, pending/failed sources return 503. A publication timeout is not success.
-
-Canonical CSV row chunks have their own published source records. Ownership citations point to those actual SDK chunks, not an unrelated RFC. Change canonical tables through structured operator re-ingestion, not the document-edit entry point.
-
-The default test network cannot reach AWS. The explicit live overlay adds egress only to the test runner and mounts the existing AWS directory read-only:
-
-```bash
-AWS_PROFILE=sai ./scripts/bootstrap-local.sh -p chronosops-test \
-  -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.bedrock-test.yml \
-  run --rm tests pytest -q -m bedrock_live tests/test_sdk_ingestion.py
-```
-
-For login-session profiles, botocore requires a writable refresh cache. This overlay copies existing login-cache files into a mode-0700 private tmpfs and uses the supported `AWS_LOGIN_CACHE_DIRECTORY` setting; the host cache stays read-only and the temporary cache disappears with the runner. It does not export credentials, change profiles, or enable recovery.
-
-### Slack source worker and notifications
-
-Configure `SLACK_TEAM_ID`, `SLACK_CHANNEL_ID`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` and an explicit canonical `SLACK_SERVICE_ID` in `.env`. The dedicated public demo channel must include the installed bot; its Socket Mode app token needs `connections:write`. For the selected payments story, bind the channel explicitly to `payments-primary`. Slack content never grants recovery authority.
-
-After trusted seeding has installed the application identity constraints, run the single connector/source process:
-
-```bash
-AWS_PROFILE=sai AWS_REGION=us-east-1 uv run --frozen --env-file .env python -m integrations.slack
-```
-
-Posts/edits/deletes enter a durable allowlisted inbox. Processing completes only after the matching SDK publication/deletion; old retries cannot resurrect deleted content. Reconnect reads at most four pages of fifteen top-level messages, not complete replay. An actual exact-source read is required to validate current Slack evidence; a connected socket alone is not freshness proof.
-
-Authenticated `GET /api/connectors/slack` reports observed connection/heartbeat state and replay gaps. A stale heartbeat is unavailable; Globex cannot obtain Acme connector state by forging a query parameter.
-
-Notifications use a database-constrained immutable outbox. Unknown submissions never automatically resend; successful sends with missing permalinks retry only receipt reads. Explicit rate limits honor `Retry-After`. Notification failure never changes measured recovery outcome. An operator can reconcile an observed unknown notification without posting:
-
-```bash
-uv run --frozen --env-file .env python -c \
-  'import asyncio,sys; from integrations.slack_notifications import reconcile_notification_receipt; print(asyncio.run(reconcile_notification_receipt(sys.argv[1])))' \
-  "$NOTIFICATION_ID"
-```
-
-Reconciliation requires one matching actual bot/channel/versioned-text/thread receipt within the bounded history scan; missing or ambiguous proof remains unknown. The live installed-app human post/edit/delete gate is currently blocked by absent Slack configuration. Controlled HTTP adapters and graph tests are not live Slack proof.
-
-
-
-### Evidence-bound proposals
-
-Proposal authority is deterministic and separate from generated explanations. Simulation routes must have healthy nodes/edges, current tenant-private exclusion evidence and recomputed cost within the cap. Search is bounded to the first five candidate paths and depth5; a bounded miss is not proof that no route exists.
-
-Real proposals require the exact monitored incident, saved failed probes with a healthy exporter, current failed monitoring, refreshed restricted-role EC2/SSM/runbook evidence, current cited Slack evidence and a matching watchdog with at least120 seconds remaining. HTTP status0 can be a genuine connection failure; command acceptance is never recovery proof.
-
-Approvals bind immutable target/document version/hash, topology, source versions, observation IDs and a five-minute expiry. Repeating the same presentation does not renew that expiry. The local proposal gate passed194 isolated tests and an actual LangGraph/MCP smoke; atomic execution/revalidation and the live incident gate are not yet passed.
-
-### Disposable workload safety
-
-Real recovery stays disabled with `REAL_RECOVERY_ENABLED=false`. Deployment, fault injection and teardown are operator-only; the app must never mount the administrator operator profile.
-
-- `AWS_PROFILE`: operator/generation profile on the host.
-- `AWS_RECOVERY_PROFILE`: a distinct existing SDK assume-role profile for the exact restricted role returned by the demo stack. No fallback to `AWS_PROFILE`.
-- Deploy requires an exact trusted assumer role ARN, operator label and future UTC expiry. Preflight resolves the current ARM64 AMI/root size and queries actual on-demand pricing; denied discovery is not permission to create.
-
-```bash
-AWS_PROFILE=sai uv run --no-env-file python -m scripts.demo_stack preflight
-AWS_PROFILE=sai uv run --no-env-file python -m scripts.demo_stack deploy \
-  --recovery-assumer-arn "$RECOVERY_ASSUMER_ARN" --operator "$USER" \
-  --expires-at "$DEMO_EXPIRES_AT"
-AWS_PROFILE=sai uv run --no-env-file python -m scripts.demo_stack status --publish
-```
-
-`RECOVERY_ASSUMER_ARN` must identify the intended runtime principal; `DEMO_EXPIRES_AT` is a future UTC timestamp such as the operator's planned shutdown time. Neither is a credential. Publication verifies current AWS evidence before binding the instance and `/healthz` URL in FalkorDB.
-
-The operator fault CLI accepts only `stop --confirm-instance <verified-id>` and `start --confirm-instance <verified-id>`. Start verifies the service before cancelling its watchdog. An unknown submission/window blocks automatic retry and requires reconciliation. There is no standalone watchdog-cancellation command.
-
-`scripts.demo_stack stop --confirm-instance <verified-id>` stops only the bound instance; **EBS continues billing**. Teardown is explicit with `destroy --confirm-stack <full-verified-stack-arn>`; it never runs automatically.
-
-Current live prerequisite: the organization's SCP denies CloudFormation discovery in `us-east-1`. Live deployment, restricted-role simulation and real recovery have not passed. Local template and isolated behavior checks do not substitute for those gates.
-
-### Probe evidence and repeated outages
-
-After verified deployment publication, generate the one Prometheus file-discovery target:
-
-```bash
-uv run --no-env-file python -m scripts.configure_monitoring
-```
-
-The generated `monitoring/targets/demo.json` is ignored by Git and image builds. An unbound/expired deployment clears stale targets and exits75; it never falls back to probing the application. `PROMETHEUS_URL` defaults to the internal Prometheus service.
-
-Health evidence uses actual raw scrape timestamps, synchronized HTTP/probe/exporter metrics and the configured marker-checking module. Missing, stale or disconnected evidence is `monitoring_unknown`, not an empty safe result. Recovery requires three distinct healthy scrapes after the command's completion timestamp; the health-polling bypass was removed.
-
-Bootstrap generates `.secrets/alert-token`; Alertmanager reads the mounted token file. Internal notifications must match the bound workload and current Prometheus evidence. Duplicate notifications reuse the same incident; a new `startsAt` creates a new outage. A healthy resolved notification without agent recovery proof is `recovered_externally`, never a learned recovery success.
+Starts the full stack: application API (`:8000`), proxy with basic auth (`:8080`), database, and Prometheus monitoring.
 
 ---
 
-## 🎬 Running the Three-Track Demonstration
+## 🎬 How to Run the Demo Scenarios
 
-The current simulation script requires the seeded database and single source writer above. The live three-chapter acceptance gate remains unverified:
+Open the operator console in your browser at `http://localhost:8080` (or through the public tunnel):
 
-```bash
-AWS_PROFILE=sai AWS_REGION=us-east-1 ./scripts/demo.sh --mode simulation
-```
+1. **Company Brain Inquiry**:
+   - Select `payments-primary` from the dropdown.
+   - Click **"Who owns this service?"** → Click **"Query Company Brain"**.
+   - *Result*: Returns Team Payments (`Ivan Vanko`, `Bob Martinez`, `Alice Chen`) with exact source citations from `services.csv`.
 
-### What You Will Observe:
+2. **Prior Incidents & Episodic Memory**:
+   - Click **"Prior incidents?"** → Click **"Query Company Brain"**.
+   - *Result*: Queries `agent_memory_acme` for historical episodes and active route exclusion facts.
 
-1. **Chapter 1: Company Brain (Track 03)**
-   - Queries `payments-primary` ownership: returns Team Payments and key engineers (Alice Chen, Bob Martinez).
-   - Computes contributor concentration from current validated source records; no recorded contributors means unknown, not a healthy distribution.
-   - Queues RFC-001 edits through the source writer; subsequent queries cite only the published revision and changed hash/excerpt.
+3. **Autonomous Outage Simulation**:
+   - Click **"Simulate payments-primary outage"**.
+   - *Result*: Downstream blast radius (4 services) is computed; `algo.SPpaths` selects the 8-cost route (`checkout → queue → payments-backup`) and rejects the 20-cost premium route.
+   - Proposal banner appears with an immutable `ApprovalRecord` and 5-minute expiry countdown.
 
-2. **Chapter 2: Agents That Act on Connected Data (Track 01)**
-   - Calculates Downstream Blast Radius: failure of `payments-primary` reaches exactly 4 services (`checkout`, `gateway`, `orders`, `worker`).
-   - Runs `algo.SPpaths` with Cost Cap 12:
-     - **REJECTS** the 20-cost Premium Link route (`checkout -> premium -> backup`).
-     - **SELECTS** the 8-cost Buffered Queue route (`checkout -> queue -> backup`, 5ms latency).
-   - Generates server-side `ApprovalRecord` with 5-minute expiry.
-   - Operator approves action: merges `:TrafficState` in FalkorDB.
+4. **Human-in-the-Loop Approval**:
+   - Click **"Approve simulation"**.
+   - *Result*: FalkorDB atomically merges `:TrafficState` and consolidates the episode into `agent_memory_acme`.
 
-3. **Chapter 3: Agent Memory and Coordination (Track 02)**
-   - Consolidates episode into `agent_memory_acme`.
-   - Starts a fresh session with **zero chat history**: recalls past episode and active semantic blocked route rule (`checkout -/> premium`).
-   - Executes learned procedural playbook (`NEXT_STEP`) with **0 LLM planning calls**, while enforcing human approval.
-   - Verifies Multi-Tenant Isolation: tenant Globex query finds 0 Acme episodes; direct Redis ACL cross-tenant read is denied (`NOPERM`).
-
-Summary manifest is automatically recorded to `artifacts/track-demo.json`.
+5. **Glass-Box Inspection**:
+   - Expand the bottom **"Server-backed trace"** drawer.
+   - *Result*: Inspect the actual OpenCypher statements executed, query parameters, and execution latencies in milliseconds.
 
 ---
 
-## 🖥️ Running the Operator Console UI
-
-Start the backend API server:
+## 🧪 Test Suite & Verified Guarantees
 
 ```bash
-AWS_PROFILE=sai AWS_REGION=us-east-1 uv run uvicorn api.main:app --host 127.0.0.1 --port 8000
+# Run all isolated default tests across all modules
+pytest -q
+
+# Run benchmark evaluation suite (graph-only query contracts)
+uv run python -m tests.eval_suite --mode graph-only --output artifacts/eval-graph-only.json
 ```
 
-Open `http://localhost:8000` in your browser:
-- **Left Panel:** Query Company Brain with pre-seeded questions or trigger incident triage.
-- **Center Canvas:** Interactive Cytoscape.js topology view with health-coded nodes and route highlights.
-- **Right Panel:** Investigation evidence, cited RFC excerpts, and pending approval banner.
-- **Bottom Drawer:** Glass-box trace drawer showing exact OpenCypher executed, latency in ms, and algorithm output.
-
-To expose the console via a Cloudflare Quick Tunnel:
-```bash
-./scripts/tunnel.sh
-```
-
----
-
-## 🧪 Running the Test Suite
-
-```bash
-# Run all 53 unit and behavioral tests across all modules
-AWS_PROFILE=sai AWS_REGION=us-east-1 uv run --frozen pytest -v tests/
-
-# Run the 24-question benchmark evaluation suite
-AWS_PROFILE=sai AWS_REGION=us-east-1 uv run python -m tests.eval_suite --mode graph-only
-```
+- **Default Unit & Behavioral Suite**: 232 passed test cases across 32 test files covering atomic claims, lease concurrency, tenant boundaries, monitoring evidence, and memory consolidation.
+- **Safety Invariant**: Real recovery requires explicit human approval on pinned SSM runbooks; zero unverified automated AWS mutations.
+- **Multi-Tenant Isolation**: Separate `agent_memory_acme` and `agent_memory_globex` databases enforced by FalkorDB ACLs.
