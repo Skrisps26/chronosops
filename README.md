@@ -30,54 +30,57 @@ Playable recordings of the running platform are available in the repository:
 
 ---
 
-## Graph Schema and Decision Architecture
+## Graph Schema and How Agents Query It
 
-ChronosOps partitions knowledge into three distinct graph namespaces in FalkorDB. **The LLM never invents an action, route, or dependency—all reasoning is anchored in Cypher execution against these graphs.**
+ChronosOps anchors all AI reasoning directly in FalkorDB. The agents execute parameterized OpenCypher queries against graph nodes and relationships to calculate blast radius, find failover routes, enforce memory exclusions, and look up ownership.
 
 ```mermaid
-graph TD
-  subgraph ops_topology ["1. ops_topology (Infrastructure, Dependencies and Actions)"]
-    Service["Service Node"] -->|DEPENDS_ON| DepService["Dependent Services"]
-    Service -->|"ROUTES_TO (cost, latency, health)"| BackupService["Backup Service Node"]
-    Incident["Incident"] -->|HAS_APPROVAL| Approval["ApprovalRecord (evidence_hash, expires_at)"]
-    Incident -->|HEALTH_EVIDENCE| Health["HealthObservation (probe_success, exporter_up)"]
-    Approval -->|APPLIES| Traffic["TrafficState (active_route)"]
-  end
+flowchart LR
+    subgraph FalkorDB ["FalkorDB Graph (Nodes and Relationships)"]
+        Service["(:Service)"] -->|DEPENDS_ON| DepService["(:Service)"]
+        Service -->|ROUTES_TO| BackupService["(:Service)"]
+        Service -->|OWNED_BY| Team["(:Team)"]
+        Team -->|MEMBER_OF| Person["(:Person)"]
+        Episode["(:IncidentEpisode)"] -->|RECORDED_DECISION| Decision["(:DecisionLog)"]
+        Decision -->|BLOCKED_BY| Fact["(:SemanticFact)"]
+        Workflow["(:WorkflowSubgraph)"] -->|NEXT_STEP| Step["(:WorkflowStep)"]
+    end
 
-  subgraph company_brain ["2. company_brain (Organizational Ownership and Architecture)"]
-    CanonicalService["Service"] -->|"RELATES (OWNED_BY)"| Team["Team Node"]
-    Person["Person Node"] -->|"RELATES (MEMBER_OF)"| Team
-    Doc["Document Node"] -->|PART_OF| Chunk["Chunk Node (text, index)"]
-    CanonicalService -->|MENTIONED_IN| Chunk
-    SourceRecord["SourceRecord (content_hash)"] -->|PUBLISHED_CHUNK| Chunk
-  end
+    subgraph Agents ["AI Agents"]
+        Triage["Triage Agent"]
+        Remediation["Remediation Agent"]
+        Memory["Memory Agent"]
+        Brain["Company Brain Agent"]
+    end
 
-  subgraph agent_memory ["3. agent_memory_tenant (Episodic and Procedural Memory)"]
-    Episode["IncidentEpisode (eligible, status)"] -->|AFFECTED_SERVICE| ServiceRef["ServiceRef"]
-    Episode -->|RECORDED_DECISION| Decision["DecisionLog"]
-    Decision -->|BLOCKED_BY| Fact["SemanticFact (subject, predicate, object, active)"]
-    Workflow["WorkflowSubgraph"] -->|CONTAINS_STEP| S1["WorkflowStep 1: retrieve_memory"]
-    S1 -->|NEXT_STEP| S2["WorkflowStep 2: blast_radius"]
-    S2 -->|NEXT_STEP| S3["WorkflowStep 3: failover_routes"]
-    S3 -->|NEXT_STEP| S4["WorkflowStep 4: validate_governance"]
-    S4 -->|NEXT_STEP| S5["WorkflowStep 5: await_approval"]
-    S5 -->|NEXT_STEP| S6["WorkflowStep 6: simulate_failover"]
-    S6 -->|NEXT_STEP| S7["WorkflowStep 7: consolidate"]
-  end
-
-  Incident -.->|Reads blast radius and routes| ops_topology
-  Approval -.->|Consolidates episode| Episode
-  Fact -.->|Excludes candidate path| BackupService
+    Triage -->|"1. Blast radius query (reverse DEPENDS_ON)"| Service
+    Remediation -->|"2. algo.SPpaths query (ROUTES_TO <= cost cap)"| BackupService
+    Memory -->|"3. Semantic exclusion query (BLOCKED_BY fact)"| Fact
+    Memory -->|"4. Procedural workflow query (NEXT_STEP)"| Workflow
+    Brain -->|"5. Grounded ownership query (OWNED_BY)"| Team
 ```
 
-### Exact Cypher Queries Governing Agent Decisions
+### Graph Nodes and Relationships
+
+| Node Label | Key Properties | Relationships |
+| :--- | :--- | :--- |
+| `(:Service)` | `service_id`, `tier`, `health` | `[:DEPENDS_ON]->(:Service)`, `[:ROUTES_TO]->(:Service)`, `[:OWNED_BY]->(:Team)` |
+| `(:Team)` | `name`, `team_id` | `[:MEMBER_OF]<-(:Person)` |
+| `(:Person)` | `name`, `email`, `person_id` | `[:MEMBER_OF]->(:Team)` |
+| `(:IncidentEpisode)` | `incident_id`, `status`, `eligible` | `[:AFFECTED_SERVICE]->(:ServiceRef)`, `[:RECORDED_DECISION]->(:DecisionLog)` |
+| `(:DecisionLog)` | `decision`, `status`, `timestamp` | `[:BLOCKED_BY]->(:SemanticFact)` |
+| `(:SemanticFact)` | `subject`, `predicate`, `object`, `active` | Prunes candidate routes in `algo.SPpaths` queries |
+| `(:WorkflowSubgraph)` | `execution_mode`, `step_count` | `[:CONTAINS_STEP]->(:WorkflowStep)` |
+| `(:WorkflowStep)` | `name`, `order`, `workflow_id` | `[:NEXT_STEP]->(:WorkflowStep)` |
+
+### How the Agent Queries the Graph
 
 1. **Blast Radius (Track 01)**:
    ```cypher
    MATCH (s:Service {service_id: $service_id})<-[:DEPENDS_ON*1..5]-(dep:Service)
    RETURN DISTINCT dep.service_id AS affected_service
    ```
-   *Guarantees*: Exact bounded reachability (depth <= 5). Centrality provides rank, but incoming dependency traversal determines the actual affected blast radius.
+   *Agent action*: Computes exact downstream reachability without LLM guesswork.
 
 2. **Cost-Capped Route Discovery (Track 01)**:
    ```cypher
@@ -90,14 +93,14 @@ graph TD
    RETURN [n IN nodes(path) | n.service_id] AS route, pathCost
    ORDER BY pathCost ASC
    ```
-   *Guarantees*: Rejects routes exceeding the cost cap (e.g. rejecting the 20-cost premium route under a cap of 12, selecting the 8-cost queue route).
+   *Agent action*: Evaluates candidate paths and cost caps directly in the graph engine.
 
 3. **Active Semantic Fact Exclusions (Track 02)**:
    ```cypher
    MATCH (f:SemanticFact {active: true, topology_version: $version, max_cost: $cap})
    RETURN f.subject AS subject, f.predicate AS predicate, f.object AS object, f.reason AS reason
    ```
-   *Guarantees*: If an operational outage previously proved a path degraded, the active fact prunes that candidate path from future recommendations.
+   *Agent action*: Prunes previously degraded routes from recommendations based on persisted memory.
 
 4. **Procedural Workflow Execution (Track 02)**:
    ```cypher
@@ -106,7 +109,7 @@ graph TD
    RETURN s.name, next.name, s.order
    ORDER BY s.order ASC
    ```
-   *Guarantees*: After 3 distinct verified successes, the deterministic sequence is loaded from memory. The execution proceeds with **zero LLM planning calls**, enforcing the human approval step.
+   *Agent action*: Executes verified operational playbooks with **zero LLM planning calls**.
 
 5. **Company Brain Grounded Ownership (Track 03)**:
    ```cypher
@@ -114,8 +117,7 @@ graph TD
    OPTIONAL MATCH (p:Person)-[:RELATES {rel_type: 'MEMBER_OF'}]->(t)
    RETURN s.name AS service, t.name AS team, collect(p.name) AS members
    ```
-   *Guarantees*: Answers are grounded directly in signed SDK properties and published source chunks, not fuzzy co-mentions.
-
+   *Agent action*: Retrieves canonical service owners and team members grounded in signed CSV row chunks.
 ---
 
 ## Quick Start (Clean Clone)
