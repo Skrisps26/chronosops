@@ -60,6 +60,10 @@ async def lifespan(application: FastAPI):
         pass  # Read surfaces remain available; mutation endpoints fail closed.
     else:
         application.state.recovery_ready = True
+        try:
+            asyncio.create_task(resume_investigations())
+        except Exception:
+            pass
     yield
 
 
@@ -79,6 +83,55 @@ app.add_middleware(
 )
 
 workflow_engine = create_incident_workflow(triage_node, remediation_node, governance_node)
+_investigation_semaphore = asyncio.Semaphore(2)
+
+
+async def _run_investigation(
+    incident_id: str,
+    service_id: str,
+    tenant_id: str = "acme",
+    observation_ids: list[str] | None = None,
+) -> None:
+    async with _investigation_semaphore:
+        initial_state = IncidentState(
+            incident_id=incident_id,
+            tenant_id=tenant_id,
+            service_id=service_id,
+            execution_mode="real",
+            status="investigating",
+            observation_ids=observation_ids or [],
+        )
+        try:
+            await workflow_engine.ainvoke(initial_state)
+        except Exception:
+            pass
+
+
+async def resume_investigations() -> None:
+    def read_investigating() -> list[dict[str, Any]]:
+        graph = _topology_graph("acme")
+        rows = graph.ro_query(
+            "MATCH (i:Incident {execution_mode: 'real', status: 'investigating'}) "
+            "RETURN i.incident_id, i.service_id, i.tenant_id LIMIT 10",
+            timeout=3000,
+        ).result_set
+        return [
+            {"incident_id": r[0], "service_id": r[1], "tenant_id": r[2]}
+            for r in rows
+        ]
+
+    try:
+        records = await asyncio.to_thread(read_investigating)
+        for rec in records:
+            asyncio.create_task(
+                _run_investigation(
+                    incident_id=rec["incident_id"],
+                    service_id=rec["service_id"],
+                    tenant_id=rec["tenant_id"],
+                )
+            )
+    except Exception:
+        pass
 
 
 class AlertNotification(BaseModel):
@@ -843,7 +896,18 @@ async def receive_alert(
     if payload.version != "4":
         raise HTTPException(status_code=422, detail="Unsupported Alertmanager payload version")
     try:
-        return await ingest_alerts([alert.model_dump() for alert in payload.alerts])
+        result = await ingest_alerts([alert.model_dump() for alert in payload.alerts])
+        for inc in result.get("incidents", []):
+            if inc.get("status") == "investigating":
+                asyncio.create_task(
+                    _run_investigation(
+                        incident_id=inc["incident_id"],
+                        service_id=inc["service"],
+                        tenant_id="acme",
+                        observation_ids=inc.get("observation_ids", []),
+                    )
+                )
+        return result
     except (AlertEvidenceUnavailable, HealthEvidenceConflict, RedisError) as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except ValueError as error:
