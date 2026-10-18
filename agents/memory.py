@@ -41,50 +41,103 @@ def get_memory_graph_name(tenant_id: str) -> str:
 async def consolidate_incident(
     incident_id: str,
     tenant_id: str = "acme",
-    outcome_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Consolidate completed incident into tenant's isolated episodic & semantic memory graph."""
-    db_admin = get_tenant_db(tenant_id, admin=True)
-    ops_graph = db_admin.select_graph(graph_names().topology)
+    db = get_tenant_db(tenant_id, admin=False)
+    ops_graph = db.select_graph(graph_names().topology)
     mem_graph_name = get_memory_graph_name(tenant_id)
-    mem_graph = db_admin.select_graph(mem_graph_name)
-
+    mem_graph = db.select_graph(mem_graph_name)
     now_ts = datetime.now(timezone.utc).isoformat()
 
-    # 1. Fetch incident & approval outcome from ops_topology if not passed directly
-    if not outcome_data:
-        q_inc = """
-        MATCH (a:ApprovalRecord {incident_id: $incident_id, tenant_id: $tenant})
-        RETURN a.incident_id AS incident_id,
-               a.execution_mode AS mode,
-               a.service_id AS service_id,
-               a.action_kind AS action_kind,
-               a.status AS status,
-               a.proposed_action AS proposed_json,
-               a.command_id AS command_id
-        LIMIT 1
-        """
-        rows = ops_graph.ro_query(q_inc, {"incident_id": incident_id, "tenant": tenant_id}).result_set
-        if not rows:
-            raise RuntimeError(f"Incident '{incident_id}' has no matching approval record in ops_topology")
-        r = rows[0]
-        outcome_data = {
-            "incident_id": r[0],
-            "execution_mode": r[1],
-            "service_id": r[2],
-            "action_kind": r[3],
-            "status": r[4],
-            "proposed_action": json.loads(r[5]) if r[5] else {},
-            "command_id": r[6],
-        }
+    # 1. Fetch authoritative incident & approval outcome from ops_topology
+    q_inc = """
+    MATCH (i:Incident {incident_id: $incident_id, tenant_id: $tenant})
+    OPTIONAL MATCH (a:ApprovalRecord {incident_id: $incident_id, tenant_id: $tenant})
+    RETURN properties(i) AS inc, properties(a) AS appr
+    LIMIT 1
+    """
+    rows = ops_graph.ro_query(q_inc, {"incident_id": incident_id, "tenant": tenant_id}).result_set
+    if not rows:
+        raise RuntimeError(f"Incident '{incident_id}' has no matching incident record in ops_topology")
+    inc_props = dict(rows[0][0])
+    appr_props = dict(rows[0][1]) if rows[0][1] else {}
+
+    status_val = appr_props.get("status") or inc_props.get("status", "unknown")
+    root_service = inc_props.get("service_id") or appr_props.get("service_id", "payments-primary")
+    mode = inc_props.get("execution_mode") or appr_props.get("execution_mode", "simulation")
+    action_kind = appr_props.get("action_kind") or inc_props.get("incident_type", "unknown")
+    topology_version = appr_props.get("topology_version") or inc_props.get("topology_version", "")
+    max_cost = int(appr_props.get("max_cost") or inc_props.get("max_cost") or 12)
+    command_id = appr_props.get("command_id", "")
+    ssm_status = appr_props.get("ssm_status", "")
+    completed_at = (
+        appr_props.get("recovered_at")
+        or appr_props.get("applied_at")
+        or appr_props.get("outcome_at")
+        or inc_props.get("outcome_at")
+        or now_ts
+    )
+
+    proposed_raw = appr_props.get("proposed_action")
+    proposed_action: dict[str, Any] = {}
+    if isinstance(proposed_raw, str):
+        try:
+            proposed_action = json.loads(proposed_raw)
+        except Exception:
+            pass
+    elif isinstance(proposed_raw, dict):
+        proposed_action = proposed_raw
+
+    recovery_sample_ids: list[str] = []
+    sample_ids_raw = appr_props.get("recovery_sample_ids") or appr_props.get("recovery_sample_ids_json")
+    if isinstance(sample_ids_raw, str):
+        try:
+            recovery_sample_ids = json.loads(sample_ids_raw)
+        except Exception:
+            pass
+    elif isinstance(sample_ids_raw, list):
+        recovery_sample_ids = [str(s) for s in sample_ids_raw]
+
+    binding_raw = appr_props.get("deployment_binding_json") or inc_props.get("deployment_binding_json")
+    deployment_binding: dict[str, Any] = {}
+    if isinstance(binding_raw, str):
+        try:
+            deployment_binding = json.loads(binding_raw)
+        except Exception:
+            pass
+
+    document_name = deployment_binding.get("document_name", "")
+    document_version = str(deployment_binding.get("document_version", ""))
+    document_hash = deployment_binding.get("document_hash", "")
+
+    # Training eligibility determination
+    if mode == "real":
+        is_eligible = (
+            status_val == "recovered"
+            and bool(command_id)
+            and ssm_status.lower() in ("success", "successful")
+            and bool(document_name)
+            and bool(document_version)
+            and bool(document_hash)
+            and len(set(recovery_sample_ids)) >= 3
+        )
+        runbook_sig = f"{document_name}@{document_version}:{document_hash}"
+    elif mode == "simulation":
+        is_eligible = (
+            status_val == "applied"
+            and action_kind == "simulate_failover"
+            and bool(proposed_action.get("route"))
+            and bool(topology_version)
+        )
+        runbook_sig = "simulation_v1"
+    else:
+        is_eligible = False
+        runbook_sig = ""
 
     episode_id = f"ep-{incident_id}"
-    root_service = outcome_data.get("service_id", "payments-primary")
-    mode = outcome_data.get("execution_mode", "simulation")
-    action_kind = outcome_data.get("action_kind", "unknown")
-    status_val = outcome_data.get("status", "completed")
+    dec_id = f"dec-{incident_id}"
 
-    # 2. Atomic MERGE of Episode in tenant memory
+    # 2. Atomic MERGE of Episode in tenant memory with immutable chronology
     mem_graph.query(
         "MERGE (ep:IncidentEpisode {id: $ep_id}) "
         "SET ep.incident_id = $inc_id, "
@@ -93,8 +146,14 @@ async def consolidate_incident(
         "    ep.root_service = $service, "
         "    ep.action_kind = $action_kind, "
         "    ep.status = $status, "
-        "    ep.timestamp = $ts, "
-        "    ep.command_id = $cmd_id "
+        "    ep.eligible = $eligible, "
+        "    ep.topology_version = $topology_version, "
+        "    ep.runbook_sig = $runbook_sig, "
+        "    ep.command_id = $cmd_id, "
+        "    ep.ssm_status = $ssm_status, "
+        "    ep.created_at = coalesce(ep.created_at, $now), "
+        "    ep.completed_at = coalesce(ep.completed_at, $completed_at), "
+        "    ep.timestamp = coalesce(ep.timestamp, $completed_at) "
         "WITH ep "
         "MERGE (s:ServiceRef {service_id: $service}) "
         "MERGE (ep)-[:AFFECTED_SERVICE]->(s)",
@@ -106,60 +165,114 @@ async def consolidate_incident(
             "service": root_service,
             "action_kind": action_kind,
             "status": status_val,
-            "ts": now_ts,
-            "cmd_id": outcome_data.get("command_id", ""),
+            "eligible": is_eligible,
+            "topology_version": topology_version,
+            "runbook_sig": runbook_sig,
+            "cmd_id": command_id,
+            "ssm_status": ssm_status,
+            "now": now_ts,
+            "completed_at": completed_at,
         },
     )
 
-    # 3. Record DecisionLog & SemanticFact if simulation failover rejected route
-    dec_id = f"dec-{incident_id}"
+    # 3. Record DecisionLog
     mem_graph.query(
         "MERGE (d:DecisionLog {id: $dec_id}) "
         "SET d.incident_id = $inc_id, "
         "    d.decision = $action_kind, "
-        "    d.timestamp = $ts "
+        "    d.status = $status, "
+        "    d.timestamp = coalesce(d.timestamp, $completed_at) "
         "WITH d MATCH (ep:IncidentEpisode {id: $ep_id}) "
         "MERGE (ep)-[:RECORDED_DECISION]->(d)",
         {
             "dec_id": dec_id,
             "inc_id": incident_id,
             "action_kind": action_kind,
-            "ts": now_ts,
+            "status": status_val,
+            "completed_at": completed_at,
             "ep_id": episode_id,
         },
     )
 
-    if mode == "simulation":
-        fact_id = "fact-blocked-premium-route"
-        mem_graph.query(
-            "MERGE (f:SemanticFact {id: $fact_id}) "
-            "SET f.subject = 'checkout', "
-            "    f.predicate = 'ROUTES_TO', "
-            "    f.object = 'premium', "
-            "    f.active = true, "
-            "    f.reason = 'Cost 20 exceeds safety cap 12', "
-            "    f.topology_version = 'v1.0', "
-            "    f.updated_at = $ts "
-            "WITH f MATCH (d:DecisionLog {id: $dec_id}) "
-            "MERGE (d)-[:BLOCKED_BY]->(f)",
-            {
-                "fact_id": fact_id,
-                "ts": now_ts,
-                "dec_id": dec_id,
-            },
-        )
+    # 4. Derive SemanticFact exclusions from actual rejected routes
+    rejected_raw = appr_props.get("rejected_routes_json") or inc_props.get("rejected_routes_json")
+    rejected_routes: list[dict[str, Any]] = []
+    if isinstance(rejected_raw, str):
+        try:
+            rejected_routes = json.loads(rejected_raw)
+        except Exception:
+            pass
+    elif isinstance(rejected_raw, list):
+        rejected_routes = rejected_raw
 
-    # 4. Count successful episodes of this mode and derive procedural workflow if threshold >= 3
+    for item in rejected_routes:
+        route = item.get("route")
+        reason = item.get("reason", "Excluded by investigation bounds")
+        if isinstance(route, list) and len(route) >= 2:
+            for src, dst in zip(route, route[1:]):
+                fact_id = f"fact-{tenant_id}-{topology_version}-{max_cost}-{src}-{dst}"
+                # Supersede older facts with incompatible version or cap
+                mem_graph.query(
+                    "MATCH (old:SemanticFact {subject: $src, predicate: 'ROUTES_TO', object: $dst, active: true}) "
+                    "WHERE old.topology_version <> $topology_version OR old.max_cost <> $max_cost "
+                    "SET old.active = false",
+                    {"src": src, "dst": dst, "topology_version": topology_version, "max_cost": max_cost},
+                )
+                mem_graph.query(
+                    "MERGE (f:SemanticFact {id: $fact_id}) "
+                    "SET f.subject = $src, "
+                    "    f.predicate = 'ROUTES_TO', "
+                    "    f.object = $dst, "
+                    "    f.reason = $reason, "
+                    "    f.topology_version = $topology_version, "
+                    "    f.source_version = $topology_version, "
+                    "    f.max_cost = $max_cost, "
+                    "    f.active = true, "
+                    "    f.created_at = coalesce(f.created_at, $now), "
+                    "    f.updated_at = $now "
+                    "WITH f MATCH (d:DecisionLog {id: $dec_id}) "
+                    "MERGE (d)-[:BLOCKED_BY]->(f)",
+                    {
+                        "fact_id": fact_id,
+                        "src": src,
+                        "dst": dst,
+                        "reason": reason,
+                        "topology_version": topology_version,
+                        "max_cost": max_cost,
+                        "now": now_ts,
+                        "dec_id": dec_id,
+                    },
+                )
+
+    # 5. Count distinct eligible episodes matching signature
     q_count = """
-    MATCH (ep:IncidentEpisode {tenant_id: $tenant, execution_mode: $mode})
+    MATCH (ep:IncidentEpisode {
+        tenant_id: $tenant,
+        root_service: $service,
+        execution_mode: $mode,
+        action_kind: $action_kind,
+        topology_version: $topology_version,
+        runbook_sig: $runbook_sig,
+        eligible: true
+    })
     WHERE ep.status IN ['applied', 'recovered']
     RETURN count(DISTINCT ep.id) AS success_count
     """
-    success_count = mem_graph.query(q_count, {"tenant": tenant_id, "mode": mode}).result_set[0][0]
+    count_rows = mem_graph.query(
+        q_count,
+        {
+            "tenant": tenant_id,
+            "service": root_service,
+            "mode": mode,
+            "action_kind": action_kind,
+            "topology_version": topology_version,
+            "runbook_sig": runbook_sig,
+        },
+    ).result_set
+    success_count = count_rows[0][0] if count_rows else 0
 
     workflow_created = False
     if success_count >= 3:
-        # Check if workflow subgraph already exists
         wf_id = f"wf-{mode}-{root_service}"
         wf_exists = bool(
             mem_graph.query(
@@ -169,7 +282,6 @@ async def consolidate_incident(
         )
 
         if not wf_exists:
-            # Create procedural memory graph with sequential NEXT_STEP edges
             if mode == "simulation":
                 steps = [
                     ("s1", "retrieve_memory", 1),
@@ -198,17 +310,20 @@ async def consolidate_incident(
                 "SET wf.execution_mode = $mode, "
                 "    wf.root_service = $service, "
                 "    wf.step_count = $step_count, "
+                "    wf.topology_version = $topology_version, "
+                "    wf.runbook_sig = $runbook_sig, "
                 "    wf.created_at = $ts",
                 {
                     "wf_id": wf_id,
                     "mode": mode,
                     "service": root_service,
                     "step_count": len(steps),
+                    "topology_version": topology_version,
+                    "runbook_sig": runbook_sig,
                     "ts": now_ts,
                 },
             )
 
-            # Create step nodes and NEXT_STEP chain
             for i, (sid, name, order) in enumerate(steps):
                 step_node_id = f"{wf_id}-{sid}"
                 mem_graph.query(
@@ -226,6 +341,14 @@ async def consolidate_incident(
                         {"prev": prev_step_id, "curr": step_node_id},
                     )
             workflow_created = True
+
+    # 6. Idempotently clear memory_pending on source action in ops_topology
+    ops_graph.query(
+        "MATCH (i:Incident {incident_id: $incident_id, tenant_id: $tenant}) "
+        "OPTIONAL MATCH (a:ApprovalRecord {incident_id: $incident_id, tenant_id: $tenant}) "
+        "SET i.memory_pending = false, a.memory_pending = false",
+        {"incident_id": incident_id, "tenant": tenant_id},
+    )
 
     return {
         "episode_id": episode_id,
@@ -343,6 +466,48 @@ async def execute_learned_procedural_workflow(
     max_cost: int = 12,
 ) -> dict[str, Any]:
     """Run the deterministic proposal nodes with current evidence and approval."""
+    wf_id = f"wf-{execution_mode}-{service_id}"
+    db = get_tenant_db(tenant_id, admin=False)
+    graph = db.select_graph(get_memory_graph_name(tenant_id))
+
+    rows = graph.ro_query(
+        "MATCH (wf:WorkflowSubgraph {id: $id}) "
+        "MATCH (wf)-[:CONTAINS_STEP]->(s:WorkflowStep) "
+        "OPTIONAL MATCH (s)-[:NEXT_STEP]->(nxt:WorkflowStep) "
+        "RETURN s.id AS step_id, s.name AS name, s.order AS order, nxt.id AS next_id, nxt.name AS next_name "
+        "ORDER BY s.order ASC",
+        {"id": wf_id},
+    ).result_set
+    if not rows:
+        raise RuntimeError(f"Workflow '{wf_id}' not found in tenant memory")
+
+    expected_steps = (
+        ["retrieve_memory", "blast_radius", "failover_routes", "validate_governance", "await_approval", "simulate_failover", "consolidate"]
+        if execution_mode == "simulation"
+        else ["retrieve_memory", "inspect_health", "blast_radius", "retrieve_provenance", "validate_governance", "await_approval", "restart_service", "verify_health", "consolidate"]
+    )
+
+    step_records = [
+        {"id": r[0], "name": r[1], "order": r[2], "next_id": r[3], "next_name": r[4]}
+        for r in rows
+    ]
+    if len(step_records) != len(expected_steps):
+        raise ValueError(f"Workflow step count mismatch: expected {len(expected_steps)}, found {len(step_records)}")
+
+    visited: set[str] = set()
+    for i, step in enumerate(step_records):
+        if step["name"] != expected_steps[i] or step["order"] != (i + 1):
+            raise ValueError(f"Invalid workflow step sequence at order {step['order']}: {step['name']} != {expected_steps[i]}")
+        if step["id"] in visited:
+            raise ValueError(f"Cyclic workflow detected at step {step['id']}")
+        visited.add(step["id"])
+        if i < len(step_records) - 1:
+            if step["next_name"] != expected_steps[i + 1]:
+                raise ValueError(f"Invalid NEXT_STEP edge from {step['name']} to {step['next_name']}, expected {expected_steps[i + 1]}")
+        else:
+            if step["next_name"] is not None:
+                raise ValueError(f"Final step {step['name']} must not have outgoing NEXT_STEP edge")
+
     from agents.governance import governance_node
     from agents.remediation import remediation_node
     from agents.triage import triage_node
@@ -350,8 +515,12 @@ async def execute_learned_procedural_workflow(
 
     memory = await retrieve_tenant_memory(service_id=service_id, tenant_id=tenant_id)
     state = IncidentState(
-        incident_id=incident_id, tenant_id=tenant_id, service_id=service_id,
-        execution_mode=execution_mode, max_cost=max_cost, evidence={"memory": memory},
+        incident_id=incident_id,
+        tenant_id=tenant_id,
+        service_id=service_id,
+        execution_mode=execution_mode,
+        max_cost=max_cost,
+        evidence={"memory": memory},
     )
     workflow = create_incident_workflow(triage_node, remediation_node, governance_node)
     result = await workflow.ainvoke(state)

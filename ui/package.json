@@ -9,13 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "cytoscape": "3.34.4",
     "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "cytoscape": "3.34.4"
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "vite": "8.3.4",
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/vite": "4.3.3",
+    "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
-    "@playwright/test": "1.64.1"
+    "vite": "8.3.4"
   }
 }

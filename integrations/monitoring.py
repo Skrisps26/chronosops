@@ -292,8 +292,14 @@ class MonitoringClient:
         deadline = time.monotonic() + timeout_seconds
         supporting: list[HealthSample] = []
         seen_timestamps: set[float] = set()
+        latest: HealthAssessment | None = None
         while time.monotonic() < deadline:
-            assessment = await asyncio.to_thread(self.check_health, endpoint)
+            try:
+                assessment = await asyncio.to_thread(self.check_health, endpoint)
+            except OSError:
+                latest = None
+                break
+            latest = assessment
             if assessment.status == "healthy" and len(assessment.samples) == 1:
                 sample = assessment.samples[0]
                 adequately_spaced = (
@@ -329,7 +335,18 @@ class MonitoringClient:
             else:
                 supporting.clear()
                 seen_timestamps.clear()
-            await asyncio.sleep(min_spacing_seconds)
+            await asyncio.sleep(min(min_spacing_seconds, max(0.0, deadline - time.monotonic())))
+
+        if latest is not None and latest.status == "unhealthy" and latest.samples and all(
+            sample.observed_at > after and time.time() - sample.observed_at <= DEFAULT_MAX_AGE_SECONDS
+            for sample in latest.samples
+        ):
+            return HealthAssessment(
+                status="unhealthy",
+                healthy=False,
+                reason="Fresh post-command probes still show an application outage",
+                samples=latest.samples,
+            )
 
         return HealthAssessment(
             status="monitoring_unknown",

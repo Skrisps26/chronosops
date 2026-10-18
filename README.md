@@ -8,6 +8,16 @@ ChronosOps targets all three **Graph Hacks 2026** tracks. Correctness repair is 
 - **Track 02 (Agent Memory and Coordination):** Episodic recall across sessions without chat history, semantic blocked-route facts, zero-LLM procedural workflows (`NEXT_STEP`), and strict multi-tenant isolation.
 - **Track 03 (Company Brain):** Knowledge graph connecting teams, services, RFCs, tickets, and live Slack discussions; single-maintainer bus factor warning; and live atomic document updates that refresh citations in real time.
 
+## Running demo and recording
+
+Current tunnel: **https://mistress-debug-weblog-should.trycloudflare.com**. It serves only the authenticated application proxy; the local machine and Quick Tunnel have no uptime guarantee. Retrieve the two demo identities from `.secrets/proxy-basic-auth.env` and distribute credentials privately, never in a public submission or video.
+
+The actual browser demo exercises a FalkorDB-backed simulation proposal, explicit approval, persisted `TrafficState`, rejection, and an authenticated public WebSocket upgrade. The combined H.264 recording is `artifacts/chronosops-demo.mp4` (104.2 seconds); it is a simulation demonstration, not EC2 recovery or all-track completion.
+
+The current AWS login expired during SDK ingestion. The SDK reported incomplete extraction/embedding writes while returning normally; those sources have been withdrawn and Company Brain is unavailable rather than advertised as ready. Restore the existing `sai` login before re-ingestion. The organization SCP still blocks workload deployment, and live Slack configuration is absent. No live recovery or learned real-recovery workflow is claimed.
+
+The local demo uses `docker-compose.yml` plus `docker-compose.demo.yml` under project `chronosops-demo`, separate volumes, DB operator port6380 and authenticated application port8080. The rootless Podman override is verified on this workstation; Docker portability and a clean-clone all-track run are not yet verified.
+
 ---
 
 ## Verification status

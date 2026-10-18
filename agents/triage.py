@@ -37,6 +37,11 @@ async def triage_node(state: IncidentState) -> dict[str, Any]:
             return refused("blast_radius_" + blast.status.lower())
         evidence["blast_radius"] = blast.data
         evidence["witness_paths"] = blast.evidence.get("witness_paths", [])
+        try:
+            from agents.memory import retrieve_tenant_memory
+            evidence["memory"] = await retrieve_tenant_memory(state.service_id, tenant_id=state.tenant_id)
+        except Exception:
+            evidence["memory"] = {}
         result: dict[str, Any] = {
             "evidence": evidence, "topology_version": topology_version, "turn_count": turn,
             "incident_type": "simulated_failover", "status": "investigating",

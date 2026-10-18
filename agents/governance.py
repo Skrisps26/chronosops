@@ -55,6 +55,7 @@ def _persist(state: IncidentState, validated: Any) -> dict[str, Any]:
         "deployment_binding_json": _json(validated.deployment_binding),
         "runbook_binding_json": _json(validated.runbook_binding), "fault_window_json": _json(validated.fault_window),
         "evidence_versions_json": _json(validated.evidence_versions),
+        "rejected_routes_json": _json(state.rejected_routes),
         "observation_ids": list(validated.observation_ids), "max_cost": state.max_cost,
         "validated_at": validated.validated_at, "created_at": now.isoformat(),
         "expires_at": (now + timedelta(minutes=5)).isoformat(), "status": "pending",
@@ -80,12 +81,13 @@ def _persist(state: IncidentState, validated: Any) -> dict[str, Any]:
         "ON CREATE SET i.service_id=$service,i.execution_mode=$mode,i.incident_type=$type,"
         "i.origin=$origin,i.starts_at=$now "
         "SET i.approval_id=$approval "
+        "SET i.rejected_routes_json=$rejected_json "
         "WITH i MATCH (a:ApprovalRecord {approval_id:$approval}) "
         "MERGE (i)-[:HAS_APPROVAL]->(a)",
         {"incident": state.incident_id, "tenant": state.tenant_id, "service": state.service_id,
          "mode": state.execution_mode, "type": validated.incident_type,
          "origin": "synthetic" if state.execution_mode == "simulation" else "probe",
-         "now": now.isoformat(), "approval": approval_id}, timeout=3000)
+         "now": now.isoformat(), "approval": approval_id, "rejected_json": _json(state.rejected_routes)}, timeout=3000)
     return record
 
 

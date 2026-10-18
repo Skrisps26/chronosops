@@ -4,7 +4,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import os
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -23,6 +23,7 @@ if not os.environ.get("AWS_PROFILE"):
     os.environ.pop("AWS_PROFILE", None)
 
 from agents.settings import GraphNames, graph_names
+from agents.mcp_client import reset_mcp_sessions
 from seed.load import get_config, load_topology
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -142,7 +143,7 @@ def _seed_company_fixture(graph_name: str) -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolated_graphs() -> Iterator[GraphNames]:
+async def isolated_graphs() -> AsyncIterator[GraphNames]:
     """Give every test a fresh server-owned graph namespace and no memory history."""
     names = graph_names()
     graph_names_to_clean = (
@@ -158,6 +159,7 @@ def isolated_graphs() -> Iterator[GraphNames]:
     try:
         for name in graph_names_to_clean:
             _delete_graph(db, name)
+        await reset_mcp_sessions()
 
         load_topology(graph_name=names.topology, wipe=False)
         _seed_company_fixture(names.company)
@@ -171,3 +173,4 @@ def isolated_graphs() -> Iterator[GraphNames]:
     finally:
         for name in graph_names_to_clean:
             _delete_graph(db, name)
+        await reset_mcp_sessions()

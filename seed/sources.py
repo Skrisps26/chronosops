@@ -33,6 +33,27 @@ class SourceUnavailable(RuntimeError):
     pass
 
 
+@contextmanager
+def evidence_state_guard(*, blocking: bool = True):
+    """Fence brief source-state transitions against final approval version reads.
+
+    This is not the long-lived SDK writer lock or action-claim arbitration.
+    All application/source processes must share the configured lock filesystem.
+    """
+    default = ROOT / ".secrets" / f"source-worker-{graph_names().company}.lock"
+    path = Path(os.environ.get("CHRONOSOPS_SOURCE_LOCK_PATH", str(default)) + ".state")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with path.open("a+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError as error:
+            raise SourceUnavailable("Evidence publication is changing; retry current evidence") from error
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def _graph(*, tenant: str | None = None) -> Any:
     config = get_config()
     if tenant is None:
@@ -70,6 +91,7 @@ def _metadata(text: str) -> dict[str, Any]:
     return metadata
 
 
+@evidence_state_guard()
 def enqueue_source(document_id: str, text: str, *, allow_create: bool = False,
                    origin: str = "synthetic", path: str = "", permalink: str = "",
                    author_id: str | None = None, service_id: str | None = None,
@@ -166,6 +188,7 @@ def _refresh_ready(graph: Any) -> None:
         timeout=3000)
 
 
+@evidence_state_guard()
 def publish_source_request(request_id: str) -> None:
     """Cut over only a finalized SDK revision; never manufacture chunk IDs/text."""
     graph = _graph()
@@ -182,10 +205,11 @@ def publish_source_request(request_id: str) -> None:
     if request["operation"] != "delete":
         chunks = graph.ro_query(
             "MATCH (d:Document {id:$id})-[:PART_OF]->(c:Chunk) "
+            "WHERE d.content_hash IS NOT NULL AND d.content_hash <> '' "
             "RETURN c.id, c.index, c.text ORDER BY c.index LIMIT 51",
             {"id": request["document_id"]}, timeout=3000).result_set
         if not chunks or len(chunks) > 50 or any(not row[0] or row[1] is None or not row[2] for row in chunks):
-            raise SourceUnavailable("SDK did not produce bounded current chunks with actual indices")
+            raise SourceUnavailable("SDK did not certify complete writes with bounded current chunks")
     graph.query(
         "MATCH (s:SourceRecord {document_id:$document}), (r:SourceRequest {request_id:$request}) "
         "WHERE s.revision=r.revision "
@@ -286,6 +310,7 @@ def _next_request() -> dict[str, Any] | None:
     return dict(rows[0][0]) if rows else None
 
 
+@evidence_state_guard()
 def _fail_request(request: dict[str, Any]) -> None:
     graph = _graph()
     graph.query("MATCH (r:SourceRequest {request_id:$id}), (s:SourceRecord {document_id:r.document_id}) "

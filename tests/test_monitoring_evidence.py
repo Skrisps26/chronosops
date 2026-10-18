@@ -372,3 +372,27 @@ def test_bad_sample_resets_recovery_evidence_sequence() -> None:
 
     assert assessment.status == "monitoring_unknown"
     assert assessment.samples == []
+
+
+@pytest.mark.parametrize("exporter_up,expected", [(1, "unhealthy"), (0, "monitoring_unknown")])
+def test_verification_distinguishes_failed_application_from_missing_monitoring(
+    exporter_up: float, expected: str,
+) -> None:
+    now = time.time()
+    fixture = PrometheusHTTPFixture([
+        prometheus_snapshot(now - 1, probe_success=0, http_status=0, exporter_up=exporter_up),
+    ])
+    fixture.start()
+    try:
+        assessment = asyncio.run(_client(fixture).verify_recovery_samples(
+            ENDPOINT, after=now - 3, min_spacing_seconds=0.01, timeout_seconds=2.0,
+        ))
+    finally:
+        fixture.stop()
+    assert assessment.status == expected
+    assert assessment.healthy is False
+    if expected == "unhealthy":
+        assert assessment.samples[0].observed_at > now - 3
+        assert assessment.samples[0].probe_success is False
+    else:
+        assert assessment.samples == []

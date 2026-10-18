@@ -33,7 +33,11 @@ def ensure_application_constraints(graph: Any, *, company: bool = False) -> None
     """Install application identity constraints using trusted seeding credentials."""
     identities = (("SlackInbox", ("event_id",)), ("SourceRecord", ("document_id",)),
                   ("SourceRequest", ("request_id",)), ("SlackConnector", ("tenant_id", "connector_id"))) \
-        if company else (("SlackNotification", ("outbox_key",)), ("ApprovalRecord", ("approval_id",)))
+        if company else (
+            ("SlackNotification", ("outbox_key",)), ("ApprovalRecord", ("approval_id",)),
+            ("RecoverySlot", ("id",)), ("TrafficState", ("tenant_id", "incident_id")),
+            ("Incident", ("tenant_id", "incident_id")), ("HealthObservation", ("id",)),
+        )
     for label, properties in identities:
         existing = [item for item in graph.list_constraints()
                     if item["type"] == "UNIQUE" and item["label"] == label
@@ -86,6 +90,10 @@ def load_topology(
         {"hash": manifest["manifest_hash"], "ts": start_ts},
     )
     ensure_application_constraints(graph)
+    graph.query(
+        "MERGE (slot:RecoverySlot {id:'real'}) ON CREATE SET slot.status='free'",
+        timeout=3000,
+    )
 
     if simulate_interruption:
         print("Simulating load interruption before loading entities...")

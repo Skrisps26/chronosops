@@ -4,6 +4,13 @@ WORKDIR /mcp
 COPY mcp/package.json mcp/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
+FROM mcp-deps AS ui-build
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY ui/ ./
+RUN npm run build
+
 # Official Python 3.12 runtime pinned by manifest digest.
 FROM docker.io/library/python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS python-base
 
@@ -30,6 +37,7 @@ WORKDIR /app
 COPY --from=python-deps /app/.venv /app/.venv
 COPY --from=mcp-deps /mcp /app/mcp
 COPY . .
+COPY --from=ui-build /ui/dist /app/ui/dist
 
 RUN groupadd --gid 10001 chronosops \
     && useradd --uid 10001 --gid chronosops --create-home --shell /usr/sbin/nologin chronosops \
@@ -41,6 +49,5 @@ ENV PATH="/app/.venv/bin:/app/mcp/node_modules/.bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1
 USER chronosops
 
-# Module 0 deliberately has no web-server substitute: the image executes the
-# real dependency probe until a later module introduces the application API.
-CMD ["python", "-m", "scripts.probe"]
+EXPOSE 8000
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

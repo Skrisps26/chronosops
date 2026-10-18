@@ -40,9 +40,10 @@ async def _synthetic_sdk_processor(request: dict[str, Any]) -> None:
     await asyncio.to_thread(
         _graph().query,
         "MERGE (d:Document {id:$document_id}) "
-        "MERGE (c:Chunk {id:$chunk_id}) SET c.index=0, c.text=$text "
+        "MERGE (c:Chunk {id:$chunk_id}) SET d.content_hash=$hash, c.index=0, c.text=$text "
         "MERGE (d)-[:PART_OF]->(c)",
-        {"document_id": request["document_id"], "chunk_id": request["document_id"] + ":0", "text": request["text"]},
+        {"document_id": request["document_id"], "chunk_id": request["document_id"] + ":0",
+         "text": request["text"], "hash": request["content_hash"]},
         timeout=3000,
     )
 

@@ -5,17 +5,101 @@ import asyncio
 import hashlib
 import json
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import boto3
 from botocore.config import Config
-from integrations.deployment import START_COMMANDS, bound_deployment
+
+from integrations.deployment import START_COMMANDS
 from scripts.demo_stack import get_config
 
 
 class RecoveryExecutionError(RuntimeError):
-    pass
+    """The requested recovery action is deterministically unsafe or invalid."""
+
+
+class RecoverySubmissionUnknown(RuntimeError):
+    """SendCommand may have succeeded but did not yield a durable command ID."""
+
+
+@dataclass(frozen=True)
+class CommandOutcome:
+    command_id: str
+    status: Literal["success", "failed", "execution_unknown"]
+    ssm_status: str
+    completed_at: float | None
+    error_code: str | None
+
+
+_POLL_TIMEOUT_SECONDS = 90.0
+_POLL_INTERVAL_SECONDS = 2.0
+_NONTERMINAL_STATUSES = frozenset(
+    {"pending", "in progress", "inprogress", "delayed", "cancelling"}
+)
+_FAILED_TERMINAL_STATUSES = frozenset(
+    {
+        "failed",
+        "cancelled",
+        "canceled",
+        "timed out",
+        "timedout",
+        "undeliverable",
+        "delivery timed out",
+        "execution timed out",
+        "terminated",
+    }
+)
+
+
+def _restart_values(binding: Mapping[str, Any]) -> tuple[str, str, str, str]:
+    instance_id = binding.get("instance_id")
+    document_name = binding.get("document_name")
+    document_version = binding.get("document_version")
+    document_hash = binding.get("document_hash")
+    if not all(isinstance(value, str) and value for value in (
+        instance_id, document_name, document_version, document_hash
+    )):
+        raise RecoveryExecutionError("Published recovery binding is incomplete")
+    if not document_version.isdigit():
+        raise RecoveryExecutionError("Published recovery document version must be numeric")
+    return instance_id, document_name, document_version, document_hash
+
+
+def _status_kind(value: object) -> Literal["success", "failed", "pending"] | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split()).casefold()
+    if normalized == "success":
+        return "success"
+    if normalized in _FAILED_TERMINAL_STATUSES:
+        return "failed"
+    if normalized in _NONTERMINAL_STATUSES:
+        return "pending"
+    return None
+
+
+def _completion_epoch(value: object) -> float | None:
+    if isinstance(value, datetime):
+        completed = value
+    elif isinstance(value, str):
+        try:
+            completed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if completed.tzinfo is None:
+        return None
+    return completed.timestamp()
+
+
+def _error_code(invocation: Mapping[str, Any]) -> str | None:
+    value = invocation.get("ResponseCode")
+    if value is None or value == 0 or value == "0":
+        return None
+    return str(value)
 
 
 class AwsRecoveryClient:
@@ -143,91 +227,115 @@ class AwsRecoveryClient:
 
         return await asyncio.to_thread(_refresh)
 
-    async def execute_restart(
-        self,
-        instance_id: str,
-        document_name: str,
-        comment: str = "ChronosOps approved recovery restart",
-        poll_timeout_seconds: float = 90.0,
-    ) -> dict[str, Any]:
-        """Execute parameterless restart document, poll for terminal status, return outcome."""
-        start_time = time.perf_counter()
-        binding = await asyncio.to_thread(bound_deployment, self.config)
-        if (instance_id, document_name, self.region) != (
-            binding["instance_id"], binding["document_name"], binding["region"]
-        ):
-            raise RecoveryExecutionError("Recovery target does not match the verified deployment")
-        identity = await asyncio.to_thread(self.sts.get_caller_identity)
-        role_name = binding["recovery_role_arn"].rsplit("/", 1)[-1]
-        expected = f"arn:aws:sts::{binding['account_id']}:assumed-role/{role_name}/"
-        if identity["Account"] != binding["account_id"] or not identity["Arn"].startswith(expected):
-            raise RecoveryExecutionError("Recovery credentials are not the bound restricted role")
+    async def submit_restart(self, binding: Mapping[str, Any], comment: str) -> str:
+        """Submit one pinned, parameterless SSM command and return its ID immediately."""
+        instance_id, document_name, document_version, document_hash = _restart_values(binding)
+        if not isinstance(comment, str) or not comment or len(comment) > 100:
+            raise RecoveryExecutionError("Recovery command comment must be between 1 and 100 characters")
 
-        # Execute SendCommand in worker thread
-        def _send() -> str:
-            resp = self.ssm_mutation.send_command(
+        def _send() -> object:
+            return self.ssm_mutation.send_command(
                 InstanceIds=[instance_id],
                 DocumentName=document_name,
-                DocumentVersion=binding["document_version"],
-                DocumentHash=binding["document_hash"],
+                DocumentVersion=document_version,
+                DocumentHash=document_hash,
                 DocumentHashType="Sha256",
                 Comment=comment,
             )
-            return resp["Command"]["CommandId"]
 
         try:
-            cmd_id = await asyncio.to_thread(_send)
-        except Exception as exc:
-            raise RecoveryExecutionError(f"Failed to submit SSM SendCommand: {exc}") from exc
+            response = await asyncio.to_thread(_send)
+        except Exception as error:
+            raise RecoverySubmissionUnknown("SSM command submission outcome is unknown") from error
+        if not isinstance(response, Mapping):
+            raise RecoverySubmissionUnknown("SSM command submission did not return a command ID")
+        command = response.get("Command")
+        command_id = command.get("CommandId") if isinstance(command, Mapping) else None
+        if not isinstance(command_id, str) or not command_id:
+            raise RecoverySubmissionUnknown("SSM command submission did not return a command ID")
+        return command_id
 
-        # Poll GetCommandInvocation
-        deadline = time.perf_counter() + poll_timeout_seconds
-        poll_interval = 2.0
-        final_status = "Pending"
-        status_details = ""
+    async def poll_restart(self, command_id: str, binding: Mapping[str, Any]) -> CommandOutcome:
+        """Poll only the pinned SSM invocation, without resubmitting on any uncertainty."""
+        instance_id, document_name, document_version, _ = _restart_values(binding)
+        if not isinstance(command_id, str) or not command_id:
+            raise RecoveryExecutionError("Recovery command ID is required")
 
-        while time.perf_counter() < deadline:
-            await asyncio.sleep(poll_interval)
+        deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
+        last_status = "Unknown"
+        missing_exception = getattr(
+            getattr(self.ssm_read, "exceptions", None), "InvocationDoesNotExist", None
+        )
 
-            def _get_status() -> dict[str, Any] | None:
-                try:
-                    return self.ssm_read.get_command_invocation(
-                        CommandId=cmd_id,
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return CommandOutcome(command_id, "execution_unknown", last_status, None, None)
+            try:
+                invocation = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.ssm_read.get_command_invocation,
+                        CommandId=command_id,
                         InstanceId=instance_id,
                         PluginName="startNginx",
+                    ),
+                    timeout=remaining,
+                )
+            except Exception as error:
+                if missing_exception is None or not isinstance(error, missing_exception):
+                    return CommandOutcome(
+                        command_id=command_id,
+                        status="execution_unknown",
+                        ssm_status=last_status,
+                        completed_at=None,
+                        error_code=None,
                     )
-                except self.ssm_read.exceptions.InvocationDoesNotExist:
-                    return None
+                invocation = None
 
-            inv = await asyncio.to_thread(_get_status)
-            if inv is None:
-                continue
+            if isinstance(invocation, Mapping):
+                status = invocation.get("Status")
+                status_details = invocation.get("StatusDetails")
+                last_status = (
+                    status_details if isinstance(status_details, str) and status_details
+                    else status if isinstance(status, str) and status
+                    else last_status
+                )
+                returned_command_id = invocation.get("CommandId")
+                if returned_command_id != command_id:
+                    return CommandOutcome(command_id, "execution_unknown", last_status, None, None)
+                if (
+                    invocation.get("InstanceId") != instance_id
+                    or invocation.get("DocumentName") != document_name
+                    or str(invocation.get("DocumentVersion", "")) != document_version
+                ):
+                    return CommandOutcome(command_id, "execution_unknown", last_status, None, None)
 
-            final_status = inv.get("Status", "Pending")
-            status_details = inv.get("StatusDetails", "")
+                status_kind = _status_kind(status)
+                details_kind = _status_kind(status_details)
+                if (
+                    status_kind is not None
+                    and details_kind is not None
+                    and status_kind != details_kind
+                ):
+                    return CommandOutcome(command_id, "execution_unknown", last_status, None, None)
+                terminal_kind = details_kind or status_kind
+                if terminal_kind == "success":
+                    completed_at = _completion_epoch(invocation.get("ExecutionEndDateTime"))
+                    if completed_at is None:
+                        return CommandOutcome(command_id, "execution_unknown", last_status, None, None)
+                    return CommandOutcome(command_id, "success", last_status, completed_at, None)
+                if terminal_kind == "failed":
+                    return CommandOutcome(
+                        command_id,
+                        "failed",
+                        last_status,
+                        _completion_epoch(invocation.get("ExecutionEndDateTime")),
+                        _error_code(invocation),
+                    )
+                if terminal_kind is None:
+                    return CommandOutcome(command_id, "execution_unknown", last_status, None, None)
 
-            if final_status in ("Success", "Failed", "Cancelled", "TimedOut"):
-                break
-
-        duration_ms = (time.perf_counter() - start_time) * 1000.0
-
-        if final_status != "Success":
-            raise RecoveryExecutionError(
-                f"SSM command {cmd_id} ended with non-success status: {final_status} ({status_details})"
-            )
-        completed = inv.get("ExecutionEndDateTime") if inv else None
-        if not completed:
-            raise RecoveryExecutionError("Successful SSM status has no command completion timestamp")
-        completed_time = datetime.fromisoformat(completed.replace("Z", "+00:00"))
-        if completed_time.tzinfo is None:
-            raise RecoveryExecutionError("SSM command completion timestamp has no timezone")
-
-        return {
-            "command_id": cmd_id,
-            "instance_id": instance_id,
-            "document_name": document_name,
-            "status": final_status,
-            "status_details": status_details,
-            "completed_at": completed_time.timestamp(),
-            "duration_ms": duration_ms,
-        }
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return CommandOutcome(command_id, "execution_unknown", last_status, None, None)
+            await asyncio.sleep(min(_POLL_INTERVAL_SECONDS, remaining))

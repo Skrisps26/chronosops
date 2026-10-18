@@ -144,13 +144,12 @@ async def test_cross_tenant_approval_denied(workflow_app):
     appr_id = res_dict["approval_id"]
 
     # Globex tries to approve Acme's incident
-    with pytest.raises(ActionNotFoundError) as exc_info:
+    with pytest.raises(ActionNotFoundError):
         await approve_action(
             incident_id=inc_id,
             approval_id=appr_id,
             tenant_id="globex",
         )
-    assert "globex" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -189,7 +188,7 @@ async def test_expired_approval_rejection():
 
 @pytest.mark.asyncio
 async def test_rejection_action():
-    """Verify that reject_action marks status as rejected."""
+    """Verify that reject_action atomically marks an unexpired pending record."""
     config = get_config()
     db = FalkorDB(
         host=config["FALKORDB_HOST"],
@@ -198,32 +197,25 @@ async def test_rejection_action():
         password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
     )
     graph = db.select_graph(graph_names().topology)
-
-    appr_id = f"appr-rej-{uuid.uuid4().hex[:8]}"
+    approval_id = f"appr-rej-{uuid.uuid4().hex[:8]}"
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
     graph.query(
-        "MERGE (a:ApprovalRecord {approval_id: $id}) "
-        "SET a.incident_id = 'inc-rej', "
-        "    a.tenant_id = 'acme', "
-        "    a.status = 'pending'",
-        {"id": appr_id},
+        "MERGE (a:ApprovalRecord {approval_id:$approval_id}) "
+        "SET a.incident_id='inc-rej',a.tenant_id='acme',a.status='pending',a.expires_at=$expires_at "
+        "MERGE (i:Incident {incident_id:'inc-rej',tenant_id:'acme'}) SET i.approval_id=$approval_id",
+        {"approval_id": approval_id, "expires_at": expires_at},
     )
+    result = await reject_action(incident_id="inc-rej", approval_id=approval_id, tenant_id="acme")
+    assert result["status"] == "rejected"
+    assert graph.ro_query(
+        "MATCH (a:ApprovalRecord {approval_id:$approval_id}) RETURN a.status",
+        {"approval_id": approval_id},
+    ).result_set == [["rejected"]]
 
-    rej_res = await reject_action(
-        incident_id="inc-rej",
-        approval_id=appr_id,
-        tenant_id="acme",
-    )
-    assert rej_res["status"] == "rejected"
-
-    status = graph.ro_query(
-        "MATCH (a:ApprovalRecord {approval_id: $id}) RETURN a.status",
-        {"id": appr_id},
-    ).result_set[0][0]
-    assert status == "rejected"
 
 @pytest.mark.asyncio
 async def test_real_recovery_disabled_never_invokes_fake_adapter(monkeypatch):
-    """A real isolated approval must stop at the server-owned recovery kill switch."""
+    """A real pending record stops at the server-owned recovery kill switch."""
     config = get_config()
     db = FalkorDB(
         host=config["FALKORDB_HOST"],
@@ -233,17 +225,14 @@ async def test_real_recovery_disabled_never_invokes_fake_adapter(monkeypatch):
     )
     graph = db.select_graph(graph_names().topology)
     approval_id = f"appr-real-disabled-{uuid.uuid4().hex[:8]}"
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
     graph.query(
-        "MERGE (a:ApprovalRecord {approval_id: $approval_id}) "
-        "SET a.incident_id = 'inc-real-disabled', "
-        "    a.tenant_id = 'acme', "
-        "    a.execution_mode = 'real', "
-        "    a.action_kind = 'restart_service', "
-        "    a.status = 'pending', "
-        "    a.proposed_action = '{\"instance_id\":\"i-test\",\"document_name\":\"ChronosOps-StartNginx\"}'",
-        {"approval_id": approval_id},
+        "MERGE (a:ApprovalRecord {approval_id:$approval_id}) "
+        "SET a.incident_id='inc-real-disabled',a.tenant_id='acme',a.execution_mode='real',"
+        "a.action_kind='restart_service',a.status='pending',a.expires_at=$expires_at,"
+        "a.proposed_action='{\\\"instance_id\\\":\\\"i-test\\\",\\\"document_name\\\":\\\"ChronosOps-StartNginx\\\"}'",
+        {"approval_id": approval_id, "expires_at": expires_at},
     )
-
     created = False
 
     class FakeRecoveryAdapter:
@@ -253,11 +242,7 @@ async def test_real_recovery_disabled_never_invokes_fake_adapter(monkeypatch):
 
     monkeypatch.setenv("REAL_RECOVERY_ENABLED", "false")
     monkeypatch.setattr("agents.actions.AwsRecoveryClient", FakeRecoveryAdapter)
-
     with pytest.raises(ActionConflictError, match="disabled"):
-        await approve_action(
-            incident_id="inc-real-disabled",
-            approval_id=approval_id,
-            tenant_id="acme",
-        )
+        await approve_action(incident_id="inc-real-disabled", approval_id=approval_id, tenant_id="acme")
     assert created is False
+

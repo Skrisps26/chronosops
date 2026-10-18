@@ -18,7 +18,7 @@ def probe_receiver(monkeypatch, prometheus_http):
     binding = {"deployment_id": "test-deployment", "service_id": "payments-primary", "tenant_id": "acme",
                "endpoint": ENDPOINT, "active": True,
                "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}
-    graph = main._topology_graph()
+    graph = main._topology_graph(write=True)
     graph.query("CREATE (d:Deployment) SET d += $binding", {"binding": binding})
     monkeypatch.setenv("ALERT_WEBHOOK_TOKEN", TOKEN)
     monkeypatch.setenv("PROMETHEUS_URL", prometheus_http.url)

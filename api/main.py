@@ -5,7 +5,9 @@ import asyncio
 import hmac
 import json
 import os
+import re
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -16,8 +18,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from falkordb import FalkorDB
 
-from agents.actions import ActionConflictError, ActionNotFoundError, approve_action, reject_action
+from agents.actions import (
+    ActionConflictError, ActionNotFoundError, ActionUnavailableError,
+    approve_action, reject_action, mark_abandoned_executions,
+)
 from agents.governance import governance_node
+from agents.answering import GenerationUnavailableError, synthesize_from_citations
 from agents.knowledge import bus_factor, decision_provenance, resolve_service_id, who_owns
 from agents.remediation import remediation_node
 from agents.triage import triage_node
@@ -45,7 +51,20 @@ from seed.load import get_config
 ROOT = Path(__file__).resolve().parents[1]
 UI_DIST = ROOT / "ui" / "dist"
 
-app = FastAPI(title="ChronosOps API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    application.state.recovery_ready = False
+    try:
+        await asyncio.to_thread(mark_abandoned_executions)
+    except (ActionUnavailableError, RedisError):
+        pass  # Read surfaces remain available; mutation endpoints fail closed.
+    else:
+        application.state.recovery_ready = True
+    yield
+
+
+app = FastAPI(title="ChronosOps API", version="0.1.0", lifespan=lifespan)
+app.state.recovery_ready = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,14 +107,19 @@ def verify_internal_token(authorization: str | None = Header(None)) -> bool:
     return True
 
 
-def _topology_graph() -> Any:
-    """Return the server-owned topology graph used for tenant ownership checks."""
+def _topology_graph(tenant_id: str = "acme", *, write: bool = False) -> Any:
+    """Use a tenant reader or validated application writer, never administrator."""
+    from agents.settings import require_tenant
+    tenant_id = require_tenant(tenant_id)
     config = get_config()
+    role = "WRITER" if write else "READER"
+    username = config.get(f"FALKORDB_{role}_{tenant_id.upper()}_USERNAME")
+    password = config.get(f"FALKORDB_{role}_{tenant_id.upper()}_PASSWORD")
+    if not username or not password:
+        raise HTTPException(status_code=503, detail="Tenant database credentials unavailable")
     db = FalkorDB(
-        host=config["FALKORDB_HOST"],
-        port=int(config["FALKORDB_PORT"]),
-        username=config["FALKORDB_ADMIN_USERNAME"],
-        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
+        host=config["FALKORDB_HOST"], port=int(config["FALKORDB_PORT"]),
+        username=username, password=password,
     )
     return db.select_graph(graph_names().topology)
 
@@ -110,7 +134,7 @@ def _create_simulation_ownership(
 ) -> None:
     """Persist server-generated ownership before emitting a run event."""
     created_at = datetime.now(timezone.utc).isoformat()
-    _topology_graph().query(
+    _topology_graph(tenant_id, write=True).query(
         "MERGE (s:Session {tenant_id: $tenant_id, session_id: $session_id}) "
         "ON CREATE SET s.created_at = $created_at "
         "SET s.updated_at = $created_at "
@@ -137,7 +161,7 @@ def _create_simulation_ownership(
 def _update_simulation_incident(
     *, incident_id: str, tenant_id: str, incident_status: str, approval_id: str | None
 ) -> None:
-    _topology_graph().query(
+    _topology_graph(tenant_id, write=True).query(
         "MATCH (i:Incident {incident_id: $incident_id, tenant_id: $tenant_id}) "
         "SET i.status = $incident_status, i.approval_id = $approval_id, "
         "    i.updated_at = $updated_at",
@@ -152,11 +176,22 @@ def _update_simulation_incident(
 
 
 def _run_belongs_to_tenant(run_id: str, tenant_id: str) -> bool:
-    rows = _topology_graph().ro_query(
+    rows = _topology_graph(tenant_id).ro_query(
         "MATCH (r:Run {run_id: $run_id, tenant_id: $tenant_id}) RETURN r.run_id LIMIT 1",
         {"run_id": run_id, "tenant_id": tenant_id},
     ).result_set
     return bool(rows)
+
+
+@app.get("/api/identity")
+async def get_identity(tenant_id: str = Depends(get_tenant_id)) -> dict[str, Any]:
+    return {
+        "tenant_id": tenant_id,
+        "execution_mode": "simulation",
+        "real_recovery_enabled": os.environ.get("REAL_RECOVERY_ENABLED", "false").lower() == "true",
+        "data_origin": "synthetic_demo_topology",
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/healthz")
@@ -171,15 +206,11 @@ async def readyz() -> dict[str, Any]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Proxy authentication is not configured",
         )
-    config = get_config()
-    db = FalkorDB(
-        host=config["FALKORDB_HOST"],
-        port=int(config["FALKORDB_PORT"]),
-        username=config["FALKORDB_ADMIN_USERNAME"],
-        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
-    )
     try:
-        res = db.select_graph(graph_names().topology).ro_query("MATCH (m:Meta {id: 'ops_topology_meta'}) RETURN m.ready").result_set
+        res = _topology_graph().ro_query(
+            "MATCH (m:Meta {id:'ops_topology_meta'}) RETURN m.ready LIMIT 1",
+            timeout=3000,
+        ).result_set
         ready = bool(res and res[0][0] is True)
         return {"status": "ready" if ready else "not_ready", "ready": ready}
     except Exception as e:
@@ -230,14 +261,7 @@ async def get_topology_for_visualization(
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
     """Return nodes and edges formatted for Cytoscape.js rendering."""
-    config = get_config()
-    db = FalkorDB(
-        host=config["FALKORDB_HOST"],
-        port=int(config["FALKORDB_PORT"]),
-        username=config["FALKORDB_ADMIN_USERNAME"],
-        password=config.get("FALKORDB_ADMIN_PASSWORD", ""),
-    )
-    graph = db.select_graph(graph_names().topology)
+    graph = _topology_graph(tenant_id)
 
     # Fetch nodes
     node_rows = graph.ro_query(
@@ -294,46 +318,239 @@ async def get_topology_for_visualization(
     return {"elements": elements, "node_count": len(node_rows), "edge_count": len(dep_rows) + len(route_rows)}
 
 
+def _question_kind(question: str) -> str | None:
+    """Select one supported graph-backed question type without model routing."""
+    normalized = question.casefold()
+    if "who owns" in normalized or "owner" in normalized:
+        return "ownership"
+    if "bus factor" in normalized or "contributor" in normalized:
+        return "bus_factor"
+    if any(term in normalized for term in ("why", "failover", "decision", "rationale", "backup")):
+        return "decision"
+    if any(term in normalized for term in ("describe", "summary", "summarize", "what is", "tell me about")):
+        return "description"
+    if any(term in normalized for term in ("prior incident", "previous incident", "past incident", "incident history", "prior outage", "last failure")):
+        return "prior_incident"
+    return None
+
+
+def _service_candidates(question: str) -> list[str]:
+    """Return bounded, explicit identifiers and names literally present in a question."""
+    candidates: list[str] = []
+
+    def add(candidate: str) -> None:
+        candidate = candidate.strip(" \t\r\n.,;:?!")
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    for match in re.finditer(r"[`'\"]([^`'\"]+)[`'\"]", question):
+        add(match.group(1))
+    for match in re.finditer(r"(?<!\w)[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)+(?!\w)", question):
+        add(match.group(0))
+
+    words = re.findall(r"[A-Za-z0-9_-]+", question)
+    for width in range(min(4, len(words)), 0, -1):
+        for start in range(len(words) - width + 1):
+            add(" ".join(words[start : start + width]))
+            if len(candidates) == 40:
+                return candidates
+    return candidates
+
+
+async def _resolve_question_service(req: QuestionRequest, tenant_id: str) -> str:
+    """Require a supplied service ID or one exact canonical ID/alias in the question."""
+    if req.service_id is not None:
+        requested = req.service_id.strip()
+        if not requested:
+            raise HTTPException(status_code=422, detail={"code": "invalid_service_id"})
+        return requested
+
+    candidates = _service_candidates(req.question)
+    resolved = {
+        service_id
+        for candidate in candidates
+        if (service_id := await resolve_service_id(candidate, tenant=tenant_id)) is not None
+    }
+    if len(resolved) == 1:
+        return next(iter(resolved))
+    if len(resolved) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "ambiguous_service", "message": "Question identifies multiple services"},
+        )
+
+    non_service_words = {
+        "a", "about", "and", "backup", "bus", "contributor", "decision", "describe",
+        "factor", "for", "is", "me", "of", "owner", "owns", "rationale", "service",
+        "summary", "tell", "the", "this", "what", "who", "why",
+    }
+    for candidate in reversed(candidates):
+        if " " not in candidate and candidate.casefold() not in non_service_words:
+            # The read tool distinguishes an unknown identifier from an unready graph.
+            return candidate
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "code": "service_id_required",
+            "message": "Provide service_id or an exact canonical service ID or alias in the question",
+        },
+    )
+
+
+def _citations(result: Any) -> list[dict[str, Any]]:
+    """Return only the bounded citations emitted by the graph tool."""
+    citations = result.evidence.get("citations", [])
+    return citations if isinstance(citations, list) else []
+
+
+def _raise_tool_failure(result: Any) -> None:
+    """Map graph tool abstentions to explicit API failures without hiding evidence."""
+    citations = _citations(result)
+    payload = {
+        "code": {
+            "NOT_FOUND": "service_not_found",
+            "NOT_READY": "company_brain_unready",
+            "ERROR": "tool_error",
+            "QUERY_TIMEOUT": "tool_error",
+        }.get(result.status, "evidence_insufficient"),
+        "message": str(result.data),
+        "tool_result": result.model_dump(mode="json"),
+        "citations": citations,
+    }
+    if result.status == "NOT_FOUND":
+        raise HTTPException(status_code=404, detail=payload)
+    if result.status in {"NOT_READY", "ERROR", "QUERY_TIMEOUT"}:
+        raise HTTPException(status_code=503, detail=payload)
+    raise HTTPException(status_code=422, detail=payload)
+
+
+def _ownership_answer(service_id: str, data: dict[str, Any]) -> str:
+    """Render only the canonical ownership facts returned by the graph tool."""
+    members = [member.get("name") for member in data.get("team_members", []) if member.get("name")]
+    answer = f"Service `{service_id}` is owned by Team {data['owner_team']}."
+    if members:
+        answer += f" Recorded team members: {', '.join(members)}."
+    return answer
+
+
+def _bus_factor_answer(service_id: str, data: dict[str, Any]) -> str:
+    """Describe the proxy without treating missing attribution as healthy distribution."""
+    proxy = data["bus_factor_proxy"]
+    if data.get("knowledge_concentration") == "unknown":
+        return (
+            f"Published evidence has no recorded contributors for `{service_id}`; "
+            "knowledge concentration is unknown."
+        )
+    lead = data.get("primary_maintainer")
+    concentration = data.get("knowledge_concentration")
+    answer = (
+        f"Recorded contributor count for `{service_id}` is {proxy}; "
+        f"the knowledge-concentration proxy is {concentration}."
+    )
+    if lead:
+        answer += f" Primary recorded maintainer: {lead}."
+    return answer
+
+
 @app.post("/api/questions")
 async def ask_question(
     req: QuestionRequest,
     request: Request,
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
-    """Question answering route over Company Brain with citations and router."""
+    """Answer supported Company Brain questions with graph evidence and bounded citations."""
     validate_origin(request)
-    q = req.question.strip().lower()
+    kind = _question_kind(req.question)
+    if kind is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "question_unsupported",
+                "message": "The question cannot be answered from the supported Company Brain evidence",
+            },
+        )
+    service_id = await _resolve_question_service(req, tenant_id)
 
-    # Route question
-    resolved_id = await resolve_service_id(req.service_id or "payments-primary", tenant=tenant_id)
-    target_service = resolved_id or "payments-primary"
+    if kind == "ownership":
+        result = await who_owns(service_id, tenant=tenant_id)
+        if result.status != "OK":
+            _raise_tool_failure(result)
+        citations = _citations(result)
+        canonical_id = result.data["service_id"]
+        return {
+            "answer": _ownership_answer(canonical_id, result.data),
+            "tool_result": result.model_dump(mode="json"),
+            "citations": citations,
+        }
 
-    if "who owns" in q or "owner" in q:
-        res = await who_owns(target_service, tenant=tenant_id)
-        team = res.data.get("owner_team")
-        members = [m.get("name") for m in res.data.get("team_members", [])]
-        answer = f"Service `{target_service}` is owned by Team {team}. Key team members: {', '.join(members)}."
-        citations = res.evidence.get("citations", [])
-        return {"answer": answer, "tool_result": res.model_dump(), "citations": citations}
+    if kind == "bus_factor":
+        result = await bus_factor(service_id, tenant=tenant_id)
+        if result.status != "OK":
+            _raise_tool_failure(result)
+        citations = _citations(result)
+        canonical_id = result.data["service_id"]
+        return {
+            "answer": _bus_factor_answer(canonical_id, result.data),
+            "tool_result": result.model_dump(mode="json"),
+            "citations": citations,
+        }
+    if kind == "prior_incident":
+        from agents.memory import retrieve_tenant_memory
+        memory = await retrieve_tenant_memory(service_id=service_id, tenant_id=tenant_id)
+        episodes = memory.get("episodes", [])
+        if not episodes:
+            answer = f"No prior incidents recorded for service `{service_id}`."
+        else:
+            latest = episodes[0]
+            answer = f"Service `{service_id}` has {len(episodes)} recorded incident(s). Latest incident `{latest['incident_id']}` ({latest['execution_mode']}) executed `{latest['action_kind']}` with status `{latest['status']}`."
+            facts = memory.get("active_facts", [])
+            if facts:
+                answer += f" Active exclusions: {len(facts)} route fact(s) recorded."
+        return {
+            "answer": answer,
+            "tool_result": {
+                "status": "OK",
+                "data": memory,
+                "evidence": {"citations": []},
+                "trace": {
+                    "tool": "retrieve_tenant_memory",
+                    "graph": f"agent_memory_{tenant_id}",
+                    "cypher": "MATCH (s:ServiceRef)<-[:AFFECTED_SERVICE]-(ep:IncidentEpisode)",
+                    "params": {"service": service_id},
+                },
+            },
+            "citations": [],
+        }
 
-    elif "bus factor" in q or "contributor" in q:
-        res = await bus_factor(target_service, tenant=tenant_id)
-        proxy = res.data.get("bus_factor_proxy")
-        lead = res.data.get("primary_maintainer")
-        warning = "WARNING: Single maintainer risk detected!" if res.data.get("bus_factor_warning") else "Healthy distributed authorship."
-        answer = f"Knowledge concentration proxy for `{target_service}` is {proxy} (Maintainer: {lead}). {warning}"
-        return {"answer": answer, "tool_result": res.model_dump()}
-
-    elif "why" in q or "failover" in q or "decision" in q or "backup" in q:
-        res = await decision_provenance(target_service, tenant=tenant_id)
-        sources = res.data.get("sources", [])
-        answer = f"Found {len(sources)} documented decisions and sources regarding `{target_service}`."
-        return {"answer": answer, "tool_result": res.model_dump(), "sources": sources}
-
-    else:
-        # Default knowledge summary
-        res = await who_owns(target_service, tenant=tenant_id)
-        return {"answer": f"Service summary for `{target_service}`.", "tool_result": res.model_dump()}
+    result = await decision_provenance(service_id, tenant=tenant_id)
+    if result.status != "OK":
+        _raise_tool_failure(result)
+    citations = _citations(result)
+    canonical_id = result.data["service_id"]
+    try:
+        answer = await synthesize_from_citations(
+            question=req.question,
+            service_id=canonical_id,
+            citations=citations,
+        )
+    except GenerationUnavailableError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "generation_unavailable",
+                "message": "Bedrock generation is unavailable; retrieved graph evidence is attached",
+                "answer": None,
+                "tool_result": result.model_dump(mode="json"),
+                "citations": citations,
+                "sources": result.data.get("sources", []),
+            },
+        ) from None
+    return {
+        "answer": answer,
+        "tool_result": result.model_dump(mode="json"),
+        "citations": citations,
+        "sources": result.data.get("sources", []),
+    }
 
 
 @app.post("/api/incidents")
@@ -401,6 +618,7 @@ async def create_incident(
         ),
     )
 
+    persisted = await get_incident(incident_id, tenant_id=tenant_id)
     return {
         "incident_id": incident_id,
         "run_id": run_id,
@@ -408,6 +626,12 @@ async def create_incident(
         "approval_id": state.approval_id,
         "proposed_action": state.proposed_action,
         "blast_radius": state.evidence.get("blast_radius"),
+        "expires_at": persisted.get("expires_at"),
+        "tool_results": [
+            state.evidence[key]
+            for key in ("blast_radius_tool", "routes")
+            if isinstance(state.evidence.get(key), dict)
+        ],
     }
 
 
@@ -416,25 +640,36 @@ async def list_incidents(
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
     """List recent incidents for the authenticated tenant."""
-    graph = _topology_graph()
-    rows = graph.ro_query(
-        "MATCH (i:Incident {tenant_id: $tenant}) "
-        "RETURN i.incident_id, i.service_id, i.status, i.starts_at "
-        "ORDER BY i.starts_at DESC LIMIT 20",
-        {"tenant": tenant_id},
-    ).result_set
-
-    appr_rows = graph.ro_query(
-        "MATCH (a:ApprovalRecord {tenant_id: $tenant}) "
-        "RETURN a.approval_id, a.incident_id, a.service_id, a.action_kind, a.status, a.expires_at "
-        "ORDER BY a.created_at DESC LIMIT 20",
-        {"tenant": tenant_id},
-    ).result_set
-
-    incidents = [{"incident_id": r[0], "service_id": r[1], "status": r[2], "starts_at": r[3]} for r in rows]
-    approvals = [{"approval_id": r[0], "incident_id": r[1], "service_id": r[2], "action": r[3], "status": r[4]} for r in appr_rows]
-
-    return {"incidents": incidents, "approvals": approvals}
+    def read() -> dict[str, Any]:
+        graph = _topology_graph(tenant_id)
+        rows = graph.ro_query(
+            "MATCH (i:Incident {tenant_id:$tenant}) "
+            "RETURN i.incident_id,i.service_id,i.status,i.starts_at "
+            "ORDER BY i.starts_at DESC LIMIT 20", {"tenant": tenant_id}, timeout=3000,
+        ).result_set
+        approval_rows = graph.ro_query(
+            "MATCH (i:Incident {tenant_id:$tenant}), (a:ApprovalRecord {tenant_id:$tenant}) "
+            "WHERE i.approval_id=a.approval_id AND i.incident_id=a.incident_id "
+            "RETURN properties(a) ORDER BY a.created_at DESC LIMIT 20",
+            {"tenant": tenant_id}, timeout=3000,
+        ).result_set
+        approvals = []
+        for row in approval_rows:
+            record = row[0]
+            approvals.append({
+                **{key: record.get(key) for key in (
+                    "approval_id", "incident_id", "service_id", "status", "expires_at",
+                    "command_id", "ssm_status", "recovery_sample_ids",
+                    "memory_pending", "notification_pending",
+                )},
+                "action": record.get("action_kind"),
+                "proposed": json.loads(record.get("proposed_action") or "{}"),
+            })
+        return {
+            "incidents": [{"incident_id": r[0], "service_id": r[1], "status": r[2], "starts_at": r[3]} for r in rows],
+            "approvals": approvals,
+        }
+    return await asyncio.to_thread(read)
 
 
 @app.get("/api/incidents/{incident_id}")
@@ -442,29 +677,70 @@ async def get_incident(
     incident_id: str,
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
-    graph = _topology_graph()
-    rows = graph.ro_query(
-        "MATCH (i:Incident {incident_id: $id, tenant_id: $tenant}) "
-        "OPTIONAL MATCH (a:ApprovalRecord {incident_id: $id, tenant_id: $tenant}) "
-        "RETURN i.service_id, i.status, a.approval_id, a.action_kind, "
-        "       a.status, a.proposed_action, a.expires_at "
-        "LIMIT 1",
-        {"id": incident_id, "tenant": tenant_id},
-    ).result_set
+    def read() -> dict[str, Any]:
+        rows = _topology_graph(tenant_id).ro_query(
+            "MATCH (i:Incident {incident_id:$id,tenant_id:$tenant}) "
+            "OPTIONAL MATCH (a:ApprovalRecord {approval_id:i.approval_id,tenant_id:$tenant}) "
+            "RETURN properties(i),properties(a) LIMIT 2",
+            {"id": incident_id, "tenant": tenant_id}, timeout=3000,
+        ).result_set
+        if not rows:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        if len(rows) != 1:
+            raise HTTPException(status_code=503, detail="Incident identity is ambiguous")
+        incident, approval = rows[0][0], rows[0][1] or {}
+        return {
+            "incident_id": incident_id, "approval_id": approval.get("approval_id"),
+            "service_id": incident["service_id"], "execution_mode": incident.get("execution_mode"),
+            "action_kind": approval.get("action_kind"),
+            "status": approval.get("status") or incident.get("status"),
+            "proposed_action": json.loads(approval.get("proposed_action") or "{}"),
+            "expires_at": approval.get("expires_at"),
+            **{key: approval.get(key) for key in (
+                "command_id", "ssm_status", "command_completed_at", "error_code",
+                "recovery_sample_ids", "recovered_at", "applied_at",
+                "memory_pending", "notification_pending",
+            )},
+        }
+    return await asyncio.to_thread(read)
 
-    if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Incident '{incident_id}' not found")
-
-    r = rows[0]
-    return {
-        "incident_id": incident_id,
-        "approval_id": r[2],
-        "service_id": r[0],
-        "action_kind": r[3],
-        "status": r[4] or r[1],
-        "proposed_action": json.loads(r[5]) if r[5] else {},
-        "expires_at": r[6],
-    }
+@app.get("/api/memory/episodes/{episode_id}")
+async def get_memory_episode(
+    episode_id: str,
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict[str, Any]:
+    def read() -> dict[str, Any]:
+        from agents.memory import get_tenant_db, get_memory_graph_name
+        db = get_tenant_db(tenant_id, admin=False)
+        graph = db.select_graph(get_memory_graph_name(tenant_id))
+        rows = graph.ro_query(
+            "MATCH (ep:IncidentEpisode {id: $id, tenant_id: $tenant}) "
+            "OPTIONAL MATCH (ep)-[:RECORDED_DECISION]->(d:DecisionLog) "
+            "RETURN properties(ep), properties(d) LIMIT 2",
+            {"id": episode_id, "tenant": tenant_id},
+            timeout=3000,
+        ).result_set
+        if not rows:
+            raise HTTPException(status_code=404, detail="Episode not found")
+        if len(rows) != 1:
+            raise HTTPException(status_code=503, detail="Episode identity is ambiguous")
+        ep_props = dict(rows[0][0])
+        decision_props = dict(rows[0][1]) if rows[0][1] else {}
+        return {
+            "episode_id": ep_props.get("id"),
+            "incident_id": ep_props.get("incident_id"),
+            "tenant_id": ep_props.get("tenant_id"),
+            "execution_mode": ep_props.get("execution_mode"),
+            "root_service": ep_props.get("root_service"),
+            "action_kind": ep_props.get("action_kind"),
+            "status": ep_props.get("status"),
+            "eligible": ep_props.get("eligible"),
+            "command_id": ep_props.get("command_id"),
+            "topology_version": ep_props.get("topology_version"),
+            "completed_at": ep_props.get("completed_at") or ep_props.get("timestamp"),
+            "decision": decision_props,
+        }
+    return await asyncio.to_thread(read)
 
 
 @app.post("/api/incidents/{incident_id}/approve")
@@ -475,19 +751,28 @@ async def approve(
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
     validate_origin(request)
+    if not request.app.state.recovery_ready:
+        raise HTTPException(status_code=503, detail="Recovery state is unavailable; no action was submitted")
     try:
         result = await approve_action(
             incident_id=incident_id,
             approval_id=req.approval_id,
             tenant_id=tenant_id,
         )
+        try:
+            from agents.memory import consolidate_incident
+            await consolidate_incident(incident_id, tenant_id=tenant_id)
+        except Exception:
+            pass
         return result
     except ActionNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ActionConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    except ActionUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except RedisError:
+        raise HTTPException(status_code=503, detail="Action state is unavailable; refresh before another decision")
 
 
 @app.post("/api/incidents/{incident_id}/reject")
@@ -498,12 +783,16 @@ async def reject(
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict[str, Any]:
     validate_origin(request)
+    if not request.app.state.recovery_ready:
+        raise HTTPException(status_code=503, detail="Recovery state is unavailable")
     try:
         return await reject_action(incident_id=incident_id, approval_id=req.approval_id, tenant_id=tenant_id)
     except ActionNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ActionConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ActionUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @app.get("/api/sources/{document_id}")

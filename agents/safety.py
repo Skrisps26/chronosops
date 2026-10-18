@@ -353,7 +353,7 @@ async def _real_proposal(state: IncidentState, client: FalkorDBMcpClient, topolo
         "incident": {key: incident[key] for key in ("incident_id", "tenant_id", "service_id", "deployment_id", "execution_mode", "origin", "starts_at") if key in incident},
         "deployment": {key: deployment[key] for key in (
             "deployment_id", "tenant_id", "service_id", "account_id", "region", "instance_id", "stack_id",
-            "document_name", "document_version", "document_hash", "recovery_role_arn",
+            "document_name", "document_version", "document_hash", "recovery_role_arn", "operator", "expires_at", "endpoint",
         )}, "runbook": {key: deployment[key] for key in ("document_name", "document_version", "document_hash", "recovery_role_arn")},
         "fault_window": fault, "observation_ids": sorted(observations),
         "observations": [{key: observation[key] for key in ("id", "data_hash", "observed_at", "probe_success", "http_status", "exporter_up") if key in observation} for observation in sorted(by_id.values(), key=lambda item: item["id"])],

@@ -1,0 +1,68 @@
+# Fresh persistent local demo. Existing chronosops data is left untouched.
+name: chronosops-demo
+services:
+  db:
+    ports: !override
+      - "127.0.0.1:6380:6379"
+  app:
+    image: localhost/chronosops-test_tests:latest
+    user: "10001:10001"
+    userns_mode: "keep-id:uid=10001,gid=10001"
+    security_opt:
+      - label=disable
+    environment:
+      REAL_RECOVERY_ENABLED: "false"
+      FALKORDB_ADMIN_USERNAME: ""
+      FALKORDB_ADMIN_PASSWORD: ""
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:8080}"
+      AWS_PROFILE: "${AWS_PROFILE:-sai}"
+      AWS_REGION: us-east-1
+      AWS_CONFIG_FILE: /run/aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /run/aws/credentials
+      AWS_LOGIN_CACHE_DIRECTORY: /run/aws-login-cache/private
+      CHRONOSOPS_SOURCE_LOCK_PATH: /run/chronosops-locks/company.lock
+    tmpfs:
+      - /run/aws-login-cache:rw,noexec,nosuid,nodev,mode=1777
+    volumes:
+      - ./api:/app/api:ro
+      - ./agents:/app/agents:ro
+      - ./integrations:/app/integrations:ro
+      - ./seed:/app/seed:ro
+      - ./scripts:/app/scripts:ro
+      - ./ui/dist:/app/ui/dist:ro
+      - ./.secrets/proxy-token:/run/secrets/proxy-token:ro
+      - "${HOME}/.aws:/run/aws:ro"
+      - ./.secrets/demo-locks:/run/chronosops-locks:rw
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        export CHRONOSOPS_PROXY_TOKEN="$$(cat /run/secrets/proxy-token)"
+        umask 077
+        mkdir -m 700 -p "$$AWS_LOGIN_CACHE_DIRECTORY"
+        for cache in /run/aws/login/cache/*.json; do
+          [ ! -f "$$cache" ] || cp "$$cache" "$$AWS_LOGIN_CACHE_DIRECTORY/"
+        done
+        exec "$$@"
+      - chronosops-demo
+    command: [uvicorn, api.main:app, --host, 0.0.0.0, --port, "8000"]
+    restart: unless-stopped
+  proxy:
+    image: localhost/chronosops-test_proxy:latest
+    build:
+      context: ./proxy
+    security_opt:
+      - label=disable
+    environment:
+      CHRONOSOPS_PROXY_TOKEN_FILE: /run/secrets/proxy-token
+    volumes:
+      - ./.secrets/proxy.htpasswd:/etc/nginx/.htpasswd:ro
+      - ./.secrets/proxy-token:/run/secrets/proxy-token:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      app:
+        condition: service_started
+    restart: unless-stopped
+volumes:
+  source-locks:

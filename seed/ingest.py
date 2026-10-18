@@ -22,10 +22,13 @@ from graphrag_sdk import (
 )
 from graphrag_sdk.ingestion.extraction_strategies.entity_extractors import LLMExtractor
 from graphrag_sdk.ingestion.extraction_strategies.graph_extraction import GraphExtraction
+from graphrag_sdk.core.models import IngestionResult
+from graphrag_sdk.ingestion.structured_pipeline import StructuredIngestionResult
 
 from agents.settings import graph_names
 from seed.generate import DATA_DIR, DOCS_DIR, MANIFEST_FILE
 from seed.ontology import get_company_ontology
+from seed.sources import evidence_state_guard
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRETS_FILE = ROOT / ".secrets" / "db.env"
@@ -203,12 +206,24 @@ def _publish_aliases(graph: Any, aliases: list[dict[str, str]]) -> None:
         )
 
 
+@evidence_state_guard()
 def _set_schema_state(graph: Any, *, schema_ready: bool, error: str | None = None) -> None:
     graph.query(
         "MERGE (m:Meta {id: 'company_brain_meta'}) "
         "SET m.ready = false, m.schema_ready = $schema_ready, m.schema_error = $error",
         {"schema_ready": schema_ready, "error": error},
     )
+
+
+def _require_complete(result: IngestionResult | StructuredIngestionResult) -> None:
+    """The SDK reports partial extraction/index writes without raising."""
+    incomplete = (
+        result.incomplete_writes
+        if isinstance(result, StructuredIngestionResult)
+        else result.metadata.get("incomplete_writes", [])
+    )
+    if incomplete:
+        raise RuntimeError("SDK ingestion incomplete: " + "; ".join(incomplete))
 
 
 async def apply_sdk_source(request: dict[str, Any]) -> None:
@@ -233,19 +248,19 @@ async def apply_sdk_source(request: dict[str, Any]) -> None:
             source_path = DATA_DIR / document_id
             if hashlib.sha256(source_path.read_bytes()).hexdigest() != request["content_hash"]:
                 raise ValueError("Canonical source changed; resubmit structured ingestion")
-            await rag.ingest(source=str(source_path), strict_mapping=True)
+            _require_complete(await rag.ingest(source=str(source_path), strict_mapping=True))
         elif request.get("operation") == "delete":
             await rag.delete_document(document_id, if_missing="ignore")
         else:
             text = request.get("text")
             if not isinstance(text, str):
                 raise ValueError("upsert source request requires text")
-            await rag.update(
+            _require_complete(await rag.update(
                 text=text,
                 document_id=document_id,
                 extractor=_extractor(llm),
                 if_missing="ingest" if request.get("allow_create") else "error",
-            )
+            ))
         await rag.finalize(resolve=True, judge=True, judge_vote=True)
         _publish_aliases(_company_graph(config), load_alias_mappings())
 
@@ -280,7 +295,7 @@ async def _initialize_company_schema() -> None:
                 )
                 if request.get("status") not in {"published", "ignored"}:
                     requests.append(request)
-                await rag.ingest(source=str(DATA_DIR / filename), strict_mapping=True)
+                _require_complete(await rag.ingest(source=str(DATA_DIR / filename), strict_mapping=True))
             for doc_path in sorted(DOCS_DIR.glob("*.md")):
                 request = enqueue_source(
                     doc_path.stem, doc_path.read_bytes().decode("utf-8"),
@@ -290,10 +305,10 @@ async def _initialize_company_schema() -> None:
                 if request.get("status") in {"published", "ignored"}:
                     continue
                 requests.append(request)
-                await rag.update(
+                _require_complete(await rag.update(
                     text=request["text"], document_id=request["document_id"],
                     extractor=_extractor(llm), if_missing="ingest",
-                )
+                ))
             await rag.finalize(resolve=True, judge=True, judge_vote=True)
             _publish_aliases(graph, aliases)
         _set_schema_state(graph, schema_ready=True)
@@ -315,7 +330,8 @@ async def ingest_company_brain(*, wipe: bool = False) -> dict[str, Any]:
     manifest = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
     async def initialize() -> None:
         if wipe:
-            await asyncio.to_thread(graph.delete)
+            with evidence_state_guard():
+                await asyncio.to_thread(graph.delete)
         await _initialize_company_schema()
 
     await run_source_worker(

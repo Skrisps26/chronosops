@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from threading import Event
 
 import pytest
 from fastapi.testclient import TestClient
 
 from seed.sources import (
-    SourceNotFound, SourceUnavailable, _graph, enqueue_source,
-    get_published_source, run_source_worker, wait_for_publication,
+    SourceNotFound, SourceUnavailable, _graph, enqueue_source, publish_source_request,
+    evidence_state_guard, get_published_source, run_source_worker, wait_for_publication,
 )
 
 DOCUMENT = 'rfc-001-payments-failover'
@@ -23,11 +25,11 @@ async def synthetic_processor(request):
     if request['operation'] != 'delete':
         graph.query(
             'MERGE (d:Document {id:$id}) MERGE (c:Chunk {id:$chunk}) '
-            'SET c.index=0, c.text=$text MERGE (d)-[:PART_OF]->(c) '
+            'SET d.content_hash=$hash, c.index=0, c.text=$text MERGE (d)-[:PART_OF]->(c) '
             'WITH c MATCH (s:Service {services__service_id:$service}) '
             'MERGE (s)-[:MENTIONED_IN]->(c)',
             {'id': request['document_id'], 'chunk': 'synthetic-'+request['content_hash'],
-             'text': request['text'], 'service': request['service_id']})
+             'text': request['text'], 'service': request['service_id'], 'hash': request['content_hash']})
 
 
 @pytest.mark.asyncio
@@ -62,6 +64,24 @@ async def test_failed_worker_keeps_source_unavailable_and_readiness_false():
     with pytest.raises(SourceUnavailable):
         await wait_for_publication(request['request_id'])
     assert _graph().ro_query("MATCH (m:Meta {id:'company_brain_meta'}) RETURN m.ready").result_set == [[False]]
+
+
+@pytest.mark.asyncio
+async def test_incomplete_sdk_document_cannot_publish_chunks_as_grounded_evidence():
+    request = enqueue_source(DOCUMENT, 'Partial extraction must remain unavailable.')
+    await synthetic_processor(request)
+    _graph().query(
+        'MATCH (d:Document {id:$id}) SET d.content_hash=null',
+        {'id': DOCUMENT},
+    )
+    with pytest.raises(SourceUnavailable, match='certify complete'):
+        publish_source_request(request['request_id'])
+    with pytest.raises(SourceUnavailable):
+        get_published_source(DOCUMENT)
+    assert _graph().ro_query(
+        'MATCH (r:SourceRequest {request_id:$id}) RETURN r.state',
+        {'id': request['request_id']},
+    ).result_set == [['pending']]
 
 
 @pytest.mark.asyncio
@@ -155,3 +175,27 @@ def test_document_entrypoint_cannot_replace_a_canonical_table():
     assert _graph().ro_query(
         "MATCH (s:SourceRecord {document_id:'services.csv'}) RETURN s.status,s.revision"
     ).result_set == [['published', 1]]
+
+
+def test_source_edit_cannot_cross_a_final_approval_version_read():
+    original = get_published_source(DOCUMENT)
+    started = Event()
+
+    def edit():
+        started.set()
+        return enqueue_source(DOCUMENT, "Concurrent source revision awaiting extraction.")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with evidence_state_guard():
+            pending = pool.submit(edit)
+            assert started.wait(timeout=2)
+            with pytest.raises(FutureTimeout):
+                pending.result(timeout=0.05)
+            assert get_published_source(DOCUMENT)["revision"] == original["revision"]
+            with pytest.raises(SourceUnavailable):
+                with evidence_state_guard(blocking=False):
+                    pytest.fail("A competing final read entered during publication fencing")
+        request = pending.result(timeout=3)
+    assert request["revision"] == original["revision"] + 1
+    with pytest.raises(SourceUnavailable):
+        get_published_source(DOCUMENT)
