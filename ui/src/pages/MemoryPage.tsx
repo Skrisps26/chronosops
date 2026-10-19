@@ -347,32 +347,32 @@ export const MemoryPage: React.FC<MemoryPageProps> = ({ onAddTrace }) => {
   const facts = elements.filter((el) => el.data.type === 'semantic_fact');
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col lg:flex-row overflow-hidden bg-slate-950 text-slate-100">
+    <div className="flex h-[calc(100vh-3.5rem)] flex-col lg:flex-row overflow-hidden bg-black text-zinc-100">
       {/* Left Control Panel */}
-      <aside className="w-full lg:w-96 flex flex-col border-r border-slate-800/80 bg-slate-900/60 p-4 overflow-y-auto shrink-0 gap-4">
+      <aside className="w-full lg:w-96 flex flex-col border-r border-zinc-800 bg-black p-4 overflow-y-auto shrink-0 gap-4">
         <div>
-          <div className="flex items-center gap-2 text-cyan-400 mb-1">
-            <Brain className="h-4 w-4" />
+          <div className="flex items-center gap-2 text-zinc-200 mb-1">
+            <Brain className="h-4 w-4 text-zinc-400" />
             <h2 className="text-xs font-bold uppercase tracking-wider">Agent Memory & Coordination</h2>
           </div>
-          <p className="text-[11px] text-slate-400 leading-relaxed">
-            Demonstrates <strong>Track 02: Agent Memory</strong>. Episodic recall across sessions, active route exclusion rules (<code className="text-amber-300">SemanticFact</code>), and procedural execution (<code className="text-cyan-300">NEXT_STEP</code>) with zero LLM planning calls.
+          <p className="text-[11px] text-zinc-400 leading-relaxed">
+            Track 02: Agent Memory. Episodic recall across sessions, active route exclusion rules (<code className="text-zinc-300">SemanticFact</code>), and procedural execution (<code className="text-zinc-300">NEXT_STEP</code>) with zero LLM planning calls.
           </p>
         </div>
 
         {/* Multi-Tenant Switcher */}
-        <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-          <label className="block text-xs font-semibold text-slate-300 mb-2">
+        <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+          <label className="block text-xs font-medium text-zinc-300 mb-2">
             Tenant Memory Partition
           </label>
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => setTenant('acme')}
               disabled={loading || executingPlaybook}
-              className={`flex items-center justify-center gap-2 rounded-lg py-2 px-3 text-xs font-bold transition ${
+              className={`flex items-center justify-center gap-2 rounded-md py-1.5 px-3 text-xs font-semibold transition ${
                 tenant === 'acme'
-                  ? 'bg-cyan-600 text-white shadow-md shadow-cyan-950 border border-cyan-500'
-                  : 'bg-slate-900 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
+                  ? 'bg-white text-black shadow-sm'
+                  : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850 border border-zinc-800'
               }`}
             >
               <UserCheck className="h-3.5 w-3.5" />
@@ -382,46 +382,46 @@ export const MemoryPage: React.FC<MemoryPageProps> = ({ onAddTrace }) => {
             <button
               onClick={() => setTenant('globex')}
               disabled={loading || executingPlaybook}
-              className={`flex items-center justify-center gap-2 rounded-lg py-2 px-3 text-xs font-bold transition ${
+              className={`flex items-center justify-center gap-2 rounded-md py-1.5 px-3 text-xs font-semibold transition ${
                 tenant === 'globex'
-                  ? 'bg-rose-600 text-white shadow-md shadow-rose-950 border border-rose-500'
-                  : 'bg-slate-900 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
+                  ? 'bg-zinc-800 text-white border border-zinc-700 shadow-sm'
+                  : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850 border border-zinc-800'
               }`}
             >
               <Lock className="h-3.5 w-3.5" />
               <span>Globex (Isolation)</span>
             </button>
           </div>
-          <p className="text-[10px] text-slate-500 mt-2">
+          <p className="text-[10px] text-zinc-500 mt-2">
             Switching tenants proves database-enforced ACL isolation in FalkorDB.
           </p>
         </div>
 
         {/* Procedural Playbook Card */}
         {tenant === 'acme' && (
-          <div className="rounded-xl border border-cyan-800/80 bg-cyan-950/20 p-3.5 space-y-3">
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3.5 space-y-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-cyan-300 font-bold text-xs uppercase tracking-wide">
-                <Sparkles className="h-4 w-4 text-cyan-400" />
+              <div className="flex items-center gap-2 text-zinc-200 font-bold text-xs uppercase tracking-wide">
+                <Sparkles className="h-4 w-4 text-zinc-400" />
                 <span>Learned Procedural Playbook</span>
               </div>
-              <span className="rounded bg-cyan-950 border border-cyan-800/80 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-300">
+              <span className="rounded bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">
                 7 Steps
               </span>
             </div>
 
-            <p className="text-[11px] text-slate-300 leading-relaxed">
-              Derived after 3 verified incident recoveries. Executes fixed LangGraph nodes along sequential <code className="text-cyan-300">[:NEXT_STEP]</code> edges with <strong>0 LLM calls</strong>.
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              Derived after 3 verified incident recoveries. Executes fixed LangGraph nodes along sequential <code className="text-zinc-300">[:NEXT_STEP]</code> edges with <strong>0 LLM calls</strong>.
             </p>
 
             <button
               onClick={handleExecutePlaybook}
               disabled={executingPlaybook || loading}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-cyan-950 transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-md bg-white px-4 py-2 text-xs font-bold text-black shadow transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {executingPlaybook ? (
                 <>
-                  <Clock className="h-4 w-4 animate-spin text-white" />
+                  <Clock className="h-4 w-4 animate-spin text-black" />
                   <span>Traversing NEXT_STEP Chain...</span>
                 </>
               ) : (
@@ -477,20 +477,20 @@ export const MemoryPage: React.FC<MemoryPageProps> = ({ onAddTrace }) => {
 
         {/* Semantic Facts Panel */}
         {tenant === 'acme' && facts.length > 0 && (
-          <div className="rounded-xl border border-amber-900/60 bg-amber-950/20 p-3 space-y-2">
-            <div className="flex items-center gap-1.5 text-amber-300 font-bold text-xs uppercase tracking-wide">
-              <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3 space-y-2">
+            <div className="flex items-center gap-1.5 text-zinc-300 font-bold text-xs uppercase tracking-wide">
+              <ShieldAlert className="h-3.5 w-3.5 text-zinc-400" />
               <span>Active Semantic Exclusion Facts ({facts.length})</span>
             </div>
-            <p className="text-[10.5px] text-slate-400">
+            <p className="text-[10.5px] text-zinc-500">
               Prunes historically degraded paths from future failover calculations:
             </p>
             {facts.map((fact) => (
-              <div key={fact.data.id} className="rounded-lg bg-slate-950/80 border border-amber-900/40 p-2 text-xs">
-                <div className="font-mono text-amber-300 font-semibold text-[11px]">
+              <div key={fact.data.id} className="rounded-md bg-black border border-zinc-800 p-2 text-xs">
+                <div className="font-mono text-zinc-200 font-semibold text-[11px]">
                   {fact.data.label}
                 </div>
-                <div className="text-[10px] text-slate-400 mt-0.5">
+                <div className="text-[10px] text-zinc-500 mt-0.5">
                   Reason: {fact.data.reason ?? 'Exceeded safety cost cap in prior incident'}
                 </div>
               </div>
@@ -500,21 +500,21 @@ export const MemoryPage: React.FC<MemoryPageProps> = ({ onAddTrace }) => {
 
         {/* Historical Episodes Card Feed */}
         {tenant === 'acme' && (
-          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-2">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3 space-y-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center justify-between">
               <span>Consolidated Episodes ({episodes.length})</span>
-              <Layers className="h-3.5 w-3.5 text-purple-400" />
+              <Layers className="h-3.5 w-3.5 text-zinc-500" />
             </h3>
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
               {episodes.map((ep) => (
-                <div key={ep.data.id} className="rounded-lg border border-purple-950/60 bg-purple-950/20 p-2 text-xs">
+                <div key={ep.data.id} className="rounded-md border border-zinc-850 bg-black p-2 text-xs">
                   <div className="flex items-center justify-between">
-                    <span className="font-mono text-purple-300 font-semibold text-[11px]">{ep.data.label}</span>
-                    <span className="rounded bg-emerald-950 border border-emerald-800/60 px-1 py-0.2 text-[9px] text-emerald-400 uppercase">
+                    <span className="font-mono text-zinc-300 font-semibold text-[11px]">{ep.data.label}</span>
+                    <span className="rounded bg-zinc-900 border border-zinc-800 px-1 py-0.2 text-[9px] text-zinc-400 uppercase">
                       {ep.data.status}
                     </span>
                   </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">
+                  <div className="text-[10px] text-zinc-500 mt-0.5">
                     Action: {ep.data.action_kind} ({ep.data.mode})
                   </div>
                 </div>
@@ -524,52 +524,52 @@ export const MemoryPage: React.FC<MemoryPageProps> = ({ onAddTrace }) => {
         )}
 
         {error && (
-          <div className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-3 text-xs text-rose-300">
+          <div className="rounded-lg border border-red-900/60 bg-zinc-950 p-3 text-xs text-red-300">
             {error}
           </div>
         )}
       </aside>
 
       {/* Center Graph Canvas */}
-      <main className="relative flex-1 flex flex-col min-w-0 bg-slate-950">
+      <main className="relative flex-1 flex flex-col min-w-0 bg-black">
         {/* Canvas Legend */}
         <div className="absolute left-4 top-3 z-10 flex flex-wrap gap-2 text-[11px] pointer-events-none">
-          <span className="flex items-center gap-1.5 rounded-lg border border-slate-800/80 bg-slate-900/90 backdrop-blur-sm px-2.5 py-1 text-slate-300 shadow">
+          <span className="flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950/90 px-2.5 py-1 text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-purple-500" /> Incident Episode
           </span>
-          <span className="flex items-center gap-1.5 rounded-lg border border-slate-800/80 bg-slate-900/90 backdrop-blur-sm px-2.5 py-1 text-slate-300 shadow">
+          <span className="flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950/90 px-2.5 py-1 text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-blue-500" /> Decision Log
           </span>
-          <span className="flex items-center gap-1.5 rounded-lg border border-slate-800/80 bg-slate-900/90 backdrop-blur-sm px-2.5 py-1 text-slate-300 shadow">
+          <span className="flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950/90 px-2.5 py-1 text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-amber-400" /> Semantic Exclusion Fact
           </span>
-          <span className="flex items-center gap-1.5 rounded-lg border border-slate-800/80 bg-slate-900/90 backdrop-blur-sm px-2.5 py-1 text-slate-300 shadow">
+          <span className="flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950/90 px-2.5 py-1 text-zinc-300">
             <span className="h-2 w-2 rounded-full bg-teal-400" /> Workflow Step (NEXT_STEP)
           </span>
         </div>
 
         {/* Globex Tenant Isolation Banner Overlay */}
         {aclDenied && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-md p-6 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-rose-950/80 border border-rose-700/80 text-rose-400 mb-4 shadow-xl shadow-rose-950/50">
-              <Lock className="h-8 w-8" />
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/95 p-6 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 mb-4">
+              <Lock className="h-7 w-7 text-zinc-400" />
             </div>
-            <h3 className="text-base font-bold text-rose-300 mb-1">
+            <h3 className="text-base font-bold text-white mb-1">
               FalkorDB Multi-Tenant Boundary Enforced
             </h3>
-            <p className="text-xs text-slate-400 max-w-md leading-relaxed mb-4">
-              Tenant <strong className="text-slate-200">globex</strong> is cryptographically restricted by database ACLs from querying Acme's episodic memory graph (<code className="text-rose-400">agent_memory_acme</code>). Zero episodes exposed.
+            <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-4">
+              Tenant <strong className="text-zinc-200">globex</strong> is cryptographically restricted by database ACLs from querying Acme's episodic memory graph (<code className="text-zinc-300">agent_memory_acme</code>). Zero episodes exposed.
             </p>
             <button
               onClick={() => setTenant('acme')}
-              className="rounded-lg bg-slate-800 border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition"
+              className="rounded-md bg-white px-4 py-2 text-xs font-semibold text-black hover:bg-zinc-200 transition"
             >
               Switch back to Acme
             </button>
           </div>
         )}
 
-        <div ref={cyRef} className="h-full w-full cursor-grab active:cursor-grabbing" />
+        <div ref={cyRef} className="h-full w-full cursor-grab active:cursor-grabbing bg-black" />
       </main>
     </div>
   );

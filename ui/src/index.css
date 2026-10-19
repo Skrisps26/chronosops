@@ -1,16 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  --bg-main: #090d16;
-  --bg-card: #111827;
-  --bg-subtle: #1f2937;
-  --border-color: #374151;
-  --text-main: #f9fafb;
-  --text-muted: #9ca3af;
-  --accent-cyan: #06b6d4;
-  --accent-green: #10b981;
-  --accent-amber: #f59e0b;
-  --accent-red: #ef4444;
+  --bg-main: #000000;
+  --bg-card: #0a0a0a;
+  --bg-subtle: #141414;
+  --border-color: #262626;
+  --text-main: #fafafa;
+  --text-muted: #a1a1aa;
+  --accent-primary: #ffffff;
+  --accent-muted: #52525b;
 }
 
 body {
@@ -23,12 +21,12 @@ body {
 }
 
 ::selection {
-  background: #155e75;
-  color: #f9fafb;
+  background: #262626;
+  color: #ffffff;
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent-cyan);
+  outline: 1.5px solid #52525b;
   outline-offset: 2px;
 }
 
