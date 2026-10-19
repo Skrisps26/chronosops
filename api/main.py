@@ -175,6 +175,37 @@ def _topology_graph(tenant_id: str = "acme", *, write: bool = False) -> Any:
         username=username, password=password,
     )
     return db.select_graph(graph_names().topology)
+def _company_brain_graph(tenant_id: str = "acme") -> Any:
+    """Use a tenant reader for Company Brain queries."""
+    from agents.settings import require_tenant
+    tenant_id = require_tenant(tenant_id)
+    config = get_config()
+    username = config.get(f"FALKORDB_READER_{tenant_id.upper()}_USERNAME")
+    password = config.get(f"FALKORDB_READER_{tenant_id.upper()}_PASSWORD")
+    if not username or not password:
+        raise HTTPException(status_code=503, detail="Tenant database credentials unavailable")
+    db = FalkorDB(
+        host=config["FALKORDB_HOST"], port=int(config["FALKORDB_PORT"]),
+        username=username, password=password,
+    )
+    return db.select_graph(graph_names().company)
+
+
+def _memory_graph(tenant_id: str = "acme", *, write: bool = False) -> Any:
+    """Use a tenant reader or writer for isolated agent memory."""
+    from agents.settings import require_tenant
+    tenant_id = require_tenant(tenant_id)
+    config = get_config()
+    role = "WRITER" if write else "READER"
+    username = config.get(f"FALKORDB_{role}_{tenant_id.upper()}_USERNAME")
+    password = config.get(f"FALKORDB_{role}_{tenant_id.upper()}_PASSWORD")
+    if not username or not password:
+        raise HTTPException(status_code=503, detail="Tenant database credentials unavailable")
+    db = FalkorDB(
+        host=config["FALKORDB_HOST"], port=int(config["FALKORDB_PORT"]),
+        username=username, password=password,
+    )
+    return db.select_graph(graph_names().memory_for(tenant_id))
 
 
 def _create_simulation_ownership(
@@ -369,6 +400,173 @@ async def get_topology_for_visualization(
         })
 
     return {"elements": elements, "node_count": len(node_rows), "edge_count": len(dep_rows) + len(route_rows)}
+@app.get("/api/company-brain/graph")
+async def get_company_brain_graph(
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict[str, Any]:
+    """Return Company Brain nodes and relations formatted for Cytoscape.js rendering."""
+    def read() -> dict[str, Any]:
+        graph = _company_brain_graph(tenant_id)
+        services = graph.ro_query("MATCH (s:Service) RETURN s.services__service_id, s.name, s.services__tier").result_set
+        teams = graph.ro_query("MATCH (t:Team) RETURN t.name, t.teams__team_id").result_set
+        people = graph.ro_query("MATCH (p:Person) RETURN p.people__person_id, p.name, p.people__email, p.people__team").result_set
+        docs = graph.ro_query("MATCH (d:Document) RETURN d.id LIMIT 25").result_set
+
+        elements = []
+        for s in services:
+            elements.append({
+                "data": {"id": s[0], "label": s[1] or s[0], "type": "service", "tier": s[2]}
+            })
+        for t in teams:
+            elements.append({
+                "data": {"id": f"team-{t[0]}", "label": f"Team {t[0]}", "type": "team"}
+            })
+        for p in people:
+            elements.append({
+                "data": {"id": p[0], "label": p[1], "type": "person", "email": p[2], "team": p[3]}
+            })
+        for d in docs:
+            elements.append({
+                "data": {"id": f"doc-{d[0]}", "label": d[0], "type": "document"}
+            })
+
+        owned_rows = graph.ro_query(
+            "MATCH (s:Service)-[r:RELATES]->(t:Team) WHERE r.rel_type = 'OWNED_BY' "
+            "RETURN s.services__service_id, t.name"
+        ).result_set
+        for r in owned_rows:
+            elements.append({
+                "data": {"id": f"owned-{r[0]}-{r[1]}", "source": r[0], "target": f"team-{r[1]}", "type": "OWNED_BY"}
+            })
+
+        member_rows = graph.ro_query(
+            "MATCH (p:Person)-[r:RELATES]->(t:Team) WHERE r.rel_type = 'MEMBER_OF' "
+            "RETURN p.people__person_id, t.name"
+        ).result_set
+        for r in member_rows:
+            elements.append({
+                "data": {"id": f"member-{r[0]}-{r[1]}", "source": r[0], "target": f"team-{r[1]}", "type": "MEMBER_OF"}
+            })
+
+        mention_rows = graph.ro_query(
+            "MATCH (d:Document)-[:PART_OF]->(c:Chunk)<-[:MENTIONED_IN]-(s:Service) "
+            "RETURN DISTINCT d.id, s.services__service_id LIMIT 50"
+        ).result_set
+        for r in mention_rows:
+            elements.append({
+                "data": {"id": f"ref-{r[0]}-{r[1]}", "source": f"doc-{r[0]}", "target": r[1], "type": "DOC_REF"}
+            })
+
+        return {
+            "elements": elements,
+            "node_count": len(services) + len(teams) + len(people) + len(docs),
+            "edge_count": len(owned_rows) + len(member_rows) + len(mention_rows),
+        }
+
+    return await asyncio.to_thread(read)
+
+
+@app.get("/api/memory/graph")
+async def get_memory_graph(
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict[str, Any]:
+    """Return tenant's memory graph formatted for Cytoscape.js rendering."""
+    def read() -> dict[str, Any]:
+        graph = _memory_graph(tenant_id)
+        elements = []
+
+        episodes = graph.ro_query(
+            "MATCH (ep:IncidentEpisode) RETURN ep.id, ep.incident_id, ep.execution_mode, ep.status, ep.action_kind, ep.completed_at"
+        ).result_set
+        for ep in episodes:
+            elements.append({
+                "data": {
+                    "id": ep[0], "label": ep[1], "type": "episode",
+                    "mode": ep[2], "status": ep[3], "action_kind": ep[4], "timestamp": ep[5]
+                }
+            })
+
+        services = graph.ro_query("MATCH (s:ServiceRef) RETURN s.service_id").result_set
+        for s in services:
+            elements.append({"data": {"id": f"ref-{s[0]}", "label": s[0], "type": "service_ref"}})
+
+        decisions = graph.ro_query("MATCH (d:DecisionLog) RETURN d.id, d.decision, d.status").result_set
+        for d in decisions:
+            elements.append({"data": {"id": d[0], "label": f"Decision: {d[1]}", "type": "decision", "status": d[2]}})
+
+        facts = graph.ro_query("MATCH (f:SemanticFact) RETURN f.id, f.subject, f.predicate, f.object, f.active, f.reason").result_set
+        for f in facts:
+            elements.append({
+                "data": {
+                    "id": f[0], "label": f"Blocked: {f[1]} -> {f[3]}", "type": "semantic_fact",
+                    "active": f[4], "reason": f[5], "subject": f[1], "object": f[3]
+                }
+            })
+
+        workflows = graph.ro_query("MATCH (wf:WorkflowSubgraph) RETURN wf.id, wf.root_service, wf.execution_mode, wf.step_count").result_set
+        for wf in workflows:
+            elements.append({
+                "data": {
+                    "id": wf[0], "label": f"Playbook: {wf[1]}", "type": "workflow",
+                    "mode": wf[2], "step_count": wf[3]
+                }
+            })
+
+        steps = graph.ro_query("MATCH (st:WorkflowStep) RETURN st.id, st.name, st.order, st.workflow_id").result_set
+        for st in steps:
+            elements.append({
+                "data": {
+                    "id": st[0], "label": f"{st[2]}. {st[1]}", "type": "workflow_step",
+                    "name": st[1], "order": st[2], "workflow_id": st[3]
+                }
+            })
+
+        ep_svc_edges = graph.ro_query("MATCH (ep:IncidentEpisode)-[:AFFECTED_SERVICE]->(s:ServiceRef) RETURN ep.id, s.service_id").result_set
+        for r in ep_svc_edges:
+            elements.append({"data": {"id": f"ep-svc-{r[0]}-{r[1]}", "source": r[0], "target": f"ref-{r[1]}", "type": "AFFECTED_SERVICE"}})
+
+        ep_dec_edges = graph.ro_query("MATCH (ep:IncidentEpisode)-[:RECORDED_DECISION]->(d:DecisionLog) RETURN ep.id, d.id").result_set
+        for r in ep_dec_edges:
+            elements.append({"data": {"id": f"ep-dec-{r[0]}-{r[1]}", "source": r[0], "target": r[1], "type": "RECORDED_DECISION"}})
+
+        dec_fact_edges = graph.ro_query("MATCH (d:DecisionLog)-[:BLOCKED_BY]->(f:SemanticFact) RETURN d.id, f.id").result_set
+        for r in dec_fact_edges:
+            elements.append({"data": {"id": f"dec-fact-{r[0]}-{r[1]}", "source": r[0], "target": r[1], "type": "BLOCKED_BY"}})
+
+        wf_step_edges = graph.ro_query("MATCH (wf:WorkflowSubgraph)-[:CONTAINS_STEP]->(s:WorkflowStep) RETURN wf.id, s.id").result_set
+        for r in wf_step_edges:
+            elements.append({"data": {"id": f"wf-step-{r[0]}-{r[1]}", "source": r[0], "target": r[1], "type": "CONTAINS_STEP"}})
+
+        next_step_edges = graph.ro_query("MATCH (p:WorkflowStep)-[:NEXT_STEP]->(c:WorkflowStep) RETURN p.id, c.id").result_set
+        for r in next_step_edges:
+            elements.append({"data": {"id": f"next-{r[0]}-{r[1]}", "source": r[0], "target": r[1], "type": "NEXT_STEP"}})
+
+        node_count = len(episodes) + len(services) + len(decisions) + len(facts) + len(workflows) + len(steps)
+        edge_count = len(ep_svc_edges) + len(ep_dec_edges) + len(dec_fact_edges) + len(wf_step_edges) + len(next_step_edges)
+
+        return {"elements": elements, "node_count": node_count, "edge_count": edge_count, "tenant_id": tenant_id}
+
+    return await asyncio.to_thread(read)
+
+
+@app.post("/api/memory/playbook/execute")
+async def execute_memory_playbook(
+    service_id: str = "payments-primary",
+    tenant_id: str = Depends(get_tenant_id),
+) -> dict[str, Any]:
+    """Execute learned procedural playbook with zero LLM planning calls."""
+    from agents.memory import execute_learned_procedural_workflow, is_workflow_learned
+    if not is_workflow_learned(service_id, "simulation", tenant_id):
+        raise HTTPException(status_code=400, detail=f"Procedural workflow is not yet learned for service {service_id}")
+    inc_id = f"inc-playbook-{uuid.uuid4().hex[:8]}"
+    result = await execute_learned_procedural_workflow(
+        incident_id=inc_id,
+        service_id=service_id,
+        tenant_id=tenant_id,
+        execution_mode="simulation",
+        max_cost=12,
+    )
+    return result
 
 
 def _question_kind(question: str) -> str | None:
