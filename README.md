@@ -2,6 +2,12 @@
 
 > **Graph-grounded incident intelligence: understand service ownership, investigate simulated outages, and remember prior outcomes.**
 
+## About
+
+During an incident, on-call engineers often have to piece together service dependencies, ownership documents and previous recovery attempts from disconnected tools. ChronosOps brings that context into one graph-grounded console for SREs and platform teams.
+
+Built for Graph Hacks, the project connects three tasks: **Company Brain** answers ownership and design questions with citations; **Incident Simulation** investigates impact and proposes cost-bounded failover routes for human approval; **Agent Memory** recalls prior outcomes and stores routing exclusions and reusable workflows.
+
 ChronosOps combines a React operator console, a FastAPI/LangGraph backend, local FalkorDB graphs and Amazon Bedrock explanations. Graph queries supply evidence and candidate routes; deterministic checks and human approval control simulated actions. It is not an autonomous production recovery system.
 
 ---
