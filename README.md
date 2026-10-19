@@ -1,8 +1,8 @@
 # ChronosOps
 
-> **Autonomous Incident Intelligence Platform powered by FalkorDB as the authoritative context layer for AI agents, integrating Amazon Bedrock and the official FalkorDB MCP Server.**
+> **Graph-grounded incident intelligence: understand service ownership, investigate simulated outages, and remember prior outcomes.**
 
-ChronosOps is a graph-native incident management platform. Instead of relying on LLM hallucinations or ungrounded heuristics, **every agent decision—from calculating blast radius and failover routing to safety approvals and episodic recall—is strictly derived from FalkorDB graph traversals and graph algorithms**.
+ChronosOps combines a React operator console, a FastAPI/LangGraph backend, local FalkorDB graphs and Amazon Bedrock explanations. Graph queries supply evidence and candidate routes; deterministic checks and human approval control simulated actions. It is not an autonomous production recovery system.
 
 ---
 
@@ -15,9 +15,9 @@ ChronosOps is a graph-native incident management platform. Instead of relying on
 | **Human-in-the-Loop Safety Gate** | Binds action proposals to immutable graph hashes and 5-minute `ApprovalRecord` expiry | **Track 01** |
 | **Episodic Recall Across Sessions** | Retrieves past incident outcomes from `agent_memory_{tenant}` without conversation history | **Track 02** |
 | **Semantic Route Exclusions** | Queries active `[:BLOCKED_BY]->(:SemanticFact)` to block historically degraded routes | **Track 02** |
-| **Zero-LLM Procedural Workflows** | Derives `WorkflowSubgraph` with `[:NEXT_STEP]` chains after 3 successes; runs with 0 LLM calls | **Track 02** |
-| **Canonical Ownership Citations** | Traverses `[:RELATES {rel_type:'OWNED_BY'}]` and cites exact SDK CSV row chunks | **Track 03** |
-| **Bus Factor & Knowledge Risk** | Analyzes `[:MEMBER_OF]` and validated `SourceRecord` author distributions | **Track 03** |
+| **Stored Procedural Workflows** | Stores `WorkflowSubgraph` steps linked by `NEXT_STEP`; execution avoids fresh LLM planning but retains validation and approval | **Track 02** |
+| **Canonical Ownership Citations** | Traverses `RELATES {rel_type:'OWNED_BY'}` and cites published SDK CSV row chunks | **Track 03** |
+| **Contributor Concentration** | Counts validated source contributors; a knowledge-risk proxy, not measured bus factor | **Track 03** |
 
 ---
 
@@ -30,48 +30,40 @@ Playable recordings of the running platform are available in the repository:
 
 ---
 
-## Graph Schema and How Agents Query It
+## How It Works
 
-ChronosOps anchors all AI reasoning directly in FalkorDB. The agents execute parameterized OpenCypher queries against graph nodes and relationships to calculate blast radius, find failover routes, enforce memory exclusions, and look up ownership.
+An on-call engineer can ask who owns a service, investigate a simulated outage, and recall previous incident outcomes. The React console calls one FastAPI backend; FalkorDB supplies connected evidence and durable state, while Bedrock explains retrieved evidence.
 
 ```mermaid
 flowchart TB
-    subgraph topology ["ops_topology · dependencies and routing"]
-        direction LR
-        Dependent["Dependent service"] -->|DEPENDS_ON| Primary["Primary service"]
-        Primary -->|ROUTES_TO| Backup["Backup service"]
-    end
+    UI["Engineer in the React console<br/>Company Brain · Incident Simulation · Agent Memory"]
+    API["FastAPI backend<br/>Graph queries + LangGraph incident workflow"]
+    DB[("Local FalkorDB<br/>Ownership · Topology · Incident memory")]
+    LLM["Amazon Bedrock<br/>Evidence-based explanations"]
+    ACTION["Approved simulation<br/>Save the selected failover route"]
 
-    subgraph company ["company_brain · canonical ownership"]
-        direction LR
-        CompanyService["Service"] -->|"RELATES: OWNED_BY"| Team["Team"]
-        Person["Person"] -->|"RELATES: MEMBER_OF"| Team
-    end
-
-    subgraph memory ["agent_memory_acme / globex · tenant-private memory"]
-        direction LR
-        Episode["IncidentEpisode"] -->|RECORDED_DECISION| Decision["DecisionLog"]
-        Decision -->|BLOCKED_BY| Fact["SemanticFact"]
-        Workflow["WorkflowSubgraph"] -->|CONTAINS_STEP| FirstStep["WorkflowStep"]
-        FirstStep -->|NEXT_STEP| NextStep["WorkflowStep"]
-    end
-
-    Primary ~~~ CompanyService
-    Team ~~~ Episode
+    UI -->|"Ask, investigate, or approve"| API
+    API <-->|"Read evidence / persist state"| DB
+    API <-->|"Evidence in / explanation out"| LLM
+    API -->|"Human approval + fresh validation"| ACTION
+    ACTION -->|"Write TrafficState"| DB
 ```
 
-### Graph Nodes and Relationships
+**What the workflow actually does:** [`triage → remediation → governance`](agents/workflow.py) retrieves blast radius and prior memory, discovers candidate routes, then validates and saves a proposal. The engineer's approval is a separate API request; [`actions.py`](agents/actions.py) rechecks the proposal before changing simulation state. The resulting incident can then be consolidated into memory.
 
-| Node Label | Key Properties | Relationships |
+**What the model does not do:** Bedrock does not calculate dependency reachability, select authorized tenants, grant approval, or execute arbitrary commands. The incident workflow uses deterministic graph tools and validation, not an LLM planning loop. Runtime investigation tools use the official read-only FalkorDB MCP server; trusted persistence paths use the Python client.
+
+**Demo boundary:** the console's failover changes graph state, not real network traffic. The separate EC2/SSM recovery integration is disabled in this demo; live Slack and real-recovery acceptance remain unverified. React/FastAPI and FalkorDB run locally in containers; Bedrock is the external model service.
+
+### Graph Data Model
+
+These are separate graphs in the same local FalkorDB instance, not three independent databases or services.
+
+| Graph | Connected data | Why it matters |
 | :--- | :--- | :--- |
-| `(:Service)` | `service_id`, `tier`, `health` | `[:DEPENDS_ON]->(:Service)`, `[:ROUTES_TO]->(:Service)`, `[:OWNED_BY]->(:Team)` |
-| `(:Team)` | `name`, `team_id` | `[:MEMBER_OF]<-(:Person)` |
-| `(:Person)` | `name`, `email`, `person_id` | `[:MEMBER_OF]->(:Team)` |
-| `(:IncidentEpisode)` | `incident_id`, `status`, `eligible` | `[:AFFECTED_SERVICE]->(:ServiceRef)`, `[:RECORDED_DECISION]->(:DecisionLog)` |
-| `(:DecisionLog)` | `decision`, `status`, `timestamp` | `[:BLOCKED_BY]->(:SemanticFact)` |
-| `(:SemanticFact)` | `subject`, `predicate`, `object`, `active` | Prunes candidate routes in `algo.SPpaths` queries |
-| `(:WorkflowSubgraph)` | `execution_mode`, `step_count` | `[:CONTAINS_STEP]->(:WorkflowStep)` |
-| `(:WorkflowStep)` | `name`, `order`, `workflow_id` | `[:NEXT_STEP]->(:WorkflowStep)` |
+| `company_brain` | Canonical services, teams and people; document chunks and publication provenance. SDK ownership/membership edges use `RELATES` with a `rel_type` property. | Answers “who owns this?” and “why was it designed this way?” with source citations. |
+| `ops_topology` | Services linked by `DEPENDS_ON` and `ROUTES_TO`; incident, approval and `TrafficState` records. | Finds affected dependents and candidate failover routes; persists proposal and simulation state. |
+| `agent_memory_acme` / `agent_memory_globex` | Incident episodes, decision logs, semantic exclusions and workflows whose steps link through `NEXT_STEP`. | Recalls past outcomes and routing constraints; stores ordered playbooks without relying on chat history. |
 
 ### How the Agent Queries the Graph
 
