@@ -30,69 +30,81 @@ Playable recordings of the running platform are available in the repository:
 
 ---
 
-## How It Works
+## Graph Map
 
-An on-call engineer can ask who owns a service, investigate a simulated outage, and recall previous incident outcomes. The React console calls one FastAPI backend; FalkorDB supplies connected evidence and durable state, while Bedrock explains retrieved evidence.
+Core node labels and stored relationships are shown below. Each box is a node, not an agent or application component. The three groups are separate graphs in one local FalkorDB instance; operational metadata and source-publication nodes are omitted for readability.
 
 ```mermaid
-flowchart TB
-    UI["Engineer in the React console<br/>Company Brain · Incident Simulation · Agent Memory"]
-    API["FastAPI backend<br/>Graph queries + LangGraph incident workflow"]
-    DB[("Local FalkorDB<br/>Ownership · Topology · Incident memory")]
-    LLM["Amazon Bedrock<br/>Evidence-based explanations"]
-    ACTION["Approved simulation<br/>Save the selected failover route"]
+flowchart LR
+    subgraph topology["ops_topology"]
+        direction TB
+        Dependent["Service<br/>dependent"] -->|DEPENDS_ON| Failed["Service<br/>failed target"]
+        Dependent -->|"ROUTES_TO<br/>cost, latency_ms, health"| Backup["Service<br/>backup route"]
+    end
 
-    UI -->|"Ask, investigate, or approve"| API
-    API <-->|"Read evidence / persist state"| DB
-    API <-->|"Evidence in / explanation out"| LLM
-    API -->|"Human approval + fresh validation"| ACTION
-    ACTION -->|"Write TrafficState"| DB
+    subgraph company["company_brain"]
+        direction TB
+        Service["Service"] -->|"RELATES<br/>rel_type: OWNED_BY"| Team["Team"]
+        Person["Person"] -->|"RELATES<br/>rel_type: MEMBER_OF"| Team
+    end
+
+    subgraph memory["agent_memory_acme / globex"]
+        direction TB
+        Episode["IncidentEpisode"] -->|RECORDED_DECISION| Decision["DecisionLog"]
+        Decision -->|BLOCKED_BY| Fact["SemanticFact"]
+        Workflow["WorkflowSubgraph"] -->|CONTAINS_STEP| Step["WorkflowStep"]
+        Step -->|NEXT_STEP| Next["WorkflowStep"]
+    end
 ```
 
-**What the workflow actually does:** [`triage → remediation → governance`](agents/workflow.py) retrieves blast radius and prior memory, discovers candidate routes, then validates and saves a proposal. The engineer's approval is a separate API request; [`actions.py`](agents/actions.py) rechecks the proposal before changing simulation state. The resulting incident can then be consolidated into memory.
+**How the agents use these paths:**
 
-**What the model does not do:** Bedrock does not calculate dependency reachability, select authorized tenants, grant approval, or execute arbitrary commands. The incident workflow uses deterministic graph tools and validation, not an LLM planning loop. Runtime investigation tools use the official read-only FalkorDB MCP server; trusted persistence paths use the Python client.
+- **Triage:** follow incoming `DEPENDS_ON` paths from the failed service to find affected dependents, up to five hops.
+- **Remediation:** search `ROUTES_TO` paths with `algo.SPpaths`, then check cost, health and compatible memory exclusions before proposing a route.
+- **Company Brain:** follow canonical ownership/membership edges and retrieve published document chunks for citations.
+- **Memory:** retrieve a service's incident episodes and route exclusions; read `CONTAINS_STEP` / `NEXT_STEP` to execute a stored workflow without fresh LLM planning. Episodes link to a `ServiceRef` through `AFFECTED_SERVICE` (omitted above).
 
-**Demo boundary:** the console's failover changes graph state, not real network traffic. The separate EC2/SSM recovery integration is disabled in this demo; live Slack and real-recovery acceptance remain unverified. React/FastAPI and FalkorDB run locally in containers; Bedrock is the external model service.
-
-### Graph Data Model
-
-These are separate graphs in the same local FalkorDB instance, not three independent databases or services.
-
-| Graph | Connected data | Why it matters |
-| :--- | :--- | :--- |
-| `company_brain` | Canonical services, teams and people; document chunks and publication provenance. SDK ownership/membership edges use `RELATES` with a `rel_type` property. | Answers “who owns this?” and “why was it designed this way?” with source citations. |
-| `ops_topology` | Services linked by `DEPENDS_ON` and `ROUTES_TO`; incident, approval and `TrafficState` records. | Finds affected dependents and candidate failover routes; persists proposal and simulation state. |
-| `agent_memory_acme` / `agent_memory_globex` | Incident episodes, decision logs, semantic exclusions and workflows whose steps link through `NEXT_STEP`. | Recalls past outcomes and routing constraints; stores ordered playbooks without relying on chat history. |
+`RELATES` is the SDK's actual edge type; `OWNED_BY` and `MEMBER_OF` are its `rel_type` values, not native relationship types. Canonical company identity uses `services__service_id`; topology and memory references use `service_id`. Graph tools and deterministic checks supply decisions; Bedrock explains evidence. Simulated failover requires human approval and changes graph state, not real traffic.
 
 ### How the Agent Queries the Graph
+
+The examples below are readable projections of the runtime queries in [`agents/queries.py`](agents/queries.py), [`agents/knowledge.py`](agents/knowledge.py) and [`agents/memory.py`](agents/memory.py). Runtime tools also check readiness, provenance, health and result bounds; these snippets alone do not authorize an action.
 
 1. **Blast Radius (Track 01)**:
    ```cypher
    MATCH (s:Service {service_id: $service_id})<-[:DEPENDS_ON*1..5]-(dep:Service)
    RETURN DISTINCT dep.service_id AS affected_service
+   LIMIT 100
    ```
-   *Agent action*: Computes exact downstream reachability without LLM guesswork.
+   *Agent action*: Finds services that depend on the failed target within five hops; returns depth/truncation information separately.
 
 2. **Cost-Capped Route Discovery (Track 01)**:
    ```cypher
    MATCH (s:Service {service_id: $source}), (t:Service {service_id: $target})
    CALL algo.SPpaths({
-     sourceNode: s, targetNode: t, relTypes: ['ROUTES_TO'], weightProp: 'cost', maxLen: 5, pathCount: 5
+     sourceNode: s, targetNode: t,
+     relTypes: ['ROUTES_TO'], relDirection: 'outgoing',
+     weightProp: 'latency_ms', costProp: 'cost',
+     maxLen: 5, pathCount: 5
    })
-   YIELD path, pathCost
-   WHERE pathCost <= $max_cost
-   RETURN [n IN nodes(path) | n.service_id] AS route, pathCost
-   ORDER BY pathCost ASC
+   YIELD path, pathWeight, pathCost
+   RETURN [n IN nodes(path) | n.service_id] AS route,
+          pathWeight AS latency_ms, pathCost AS cost
+   ORDER BY latency_ms ASC, cost ASC
    ```
-   *Agent action*: Evaluates candidate paths and cost caps directly in the graph engine.
+   *Agent action*: Inspects the first five latency-ranked candidates, then applies cost-cap, node/edge-health and memory-exclusion checks in deterministic Python validation. This is a bounded candidate search, not proof that every possible route was considered.
 
 3. **Active Semantic Fact Exclusions (Track 02)**:
    ```cypher
-   MATCH (f:SemanticFact {active: true, topology_version: $version, max_cost: $cap})
-   RETURN f.subject AS subject, f.predicate AS predicate, f.object AS object, f.reason AS reason
+   MATCH (f:SemanticFact {active: true})
+   RETURN f.id AS fact_id, f.subject AS subject,
+          f.predicate AS predicate, f.object AS object,
+          f.reason AS reason, f.topology_version AS topology_version,
+          f.max_cost AS max_cost, f.source_version AS source_version
+   ORDER BY fact_id ASC
+   LIMIT 100
    ```
-   *Agent action*: Prunes previously degraded routes from recommendations based on persisted memory.
+   *Agent action*: Checks which historical exclusions apply to the current routing context before rejecting candidate edges.
 
 4. **Procedural Workflow Execution (Track 02)**:
    ```cypher
@@ -101,7 +113,7 @@ These are separate graphs in the same local FalkorDB instance, not three indepen
    RETURN s.name, next.name, s.order
    ORDER BY s.order ASC
    ```
-   *Agent action*: Executes verified operational playbooks with **zero LLM planning calls**.
+   *Agent action*: Validates the stored step sequence and runs fixed workflow nodes with **zero fresh LLM planning calls**; current safety checks and human approval still apply.
 
 5. **Company Brain Grounded Ownership (Track 03)**:
    ```cypher
