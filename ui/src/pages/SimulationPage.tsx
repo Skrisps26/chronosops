@@ -12,6 +12,7 @@ import {
   Sliders,
   Radio,
   ArrowRight,
+  Sparkles,
 } from 'lucide-react';
 import { CytoscapeElement, NodeData, ProposedAction, TraceLog, ActionStatus } from '../types';
 
@@ -41,6 +42,7 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onAddTrace }) =>
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<NodeData | null>(null);
   const [blastServices, setBlastServices] = useState<string[]>([]);
+  const [agentBriefing, setAgentBriefing] = useState<string | null>(null);
 
   const cyRef = useRef<HTMLDivElement>(null);
   const cyInstance = useRef<cytoscape.Core | null>(null);
@@ -75,17 +77,17 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onAddTrace }) =>
           selector: 'node',
           style: {
             label: 'data(id)',
-            'font-size': '10px',
-            'font-weight': 600,
-            color: '#f8fafc',
-            'text-outline-width': 2,
-            'text-outline-color': '#020617',
-            'text-outline-opacity': 0.9,
-            'background-color': '#10b981',
+            'font-size': '13px',
+            'font-weight': 700,
+            color: '#ffffff',
+            'text-outline-width': 2.5,
+            'text-outline-color': '#000000',
+            'text-outline-opacity': 1,
+            'background-color': '#22c55e',
             'text-valign': 'bottom',
-            'text-margin-y': 4,
-            width: 22,
-            height: 22,
+            'text-margin-y': 6,
+            width: 30,
+            height: 30,
             'transition-property': 'background-color, border-color, border-width, width, height, opacity',
             'transition-duration': 300,
           },
@@ -94,46 +96,46 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onAddTrace }) =>
           selector: 'node[id = "payments-primary"]',
           style: {
             shape: 'diamond',
-            width: 32,
-            height: 32,
+            width: 42,
+            height: 42,
           },
         },
         {
           selector: 'node.outage-node',
           style: {
-            'background-color': '#f43f5e',
-            'border-color': '#fda4af',
+            'background-color': '#dc2626',
+            'border-color': '#ffffff',
             'border-width': 4,
-            width: 38,
-            height: 38,
+            width: 46,
+            height: 46,
           },
         },
         {
           selector: 'node.blast-affected',
           style: {
-            'background-color': '#f59e0b',
-            'border-color': '#fde68a',
+            'background-color': '#eab308',
+            'border-color': '#fef08a',
             'border-width': 3,
-            width: 28,
-            height: 28,
+            width: 34,
+            height: 34,
           },
         },
         {
           selector: 'node.route-active',
           style: {
-            'background-color': '#06b6d4',
-            'border-color': '#a5f3fc',
-            'border-width': 3,
-            width: 28,
-            height: 28,
+            'background-color': '#38bdf8',
+            'border-color': '#ffffff',
+            'border-width': 3.5,
+            width: 36,
+            height: 36,
           },
         },
         {
           selector: 'node.route-rejected',
           style: {
-            'background-color': '#ef4444',
+            'background-color': '#dc2626',
             'border-color': '#fca5a5',
-            'border-width': 2,
+            'border-width': 2.5,
           },
         },
         {
@@ -334,6 +336,7 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onAddTrace }) =>
           if (tr.trace) onAddTrace(tr.trace);
         });
       }
+      setAgentBriefing(data.agent_briefing || null);
 
       setActiveApproval({
         approval_id: data.approval_id,
@@ -410,6 +413,7 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onAddTrace }) =>
   const handleReset = () => {
     resetGraphVisuals();
     setActiveApproval(null);
+    setAgentBriefing(null);
     setActionOutcome(null);
     setSimulationPhase('idle');
     setBlastServices([]);
@@ -658,6 +662,18 @@ export const SimulationPage: React.FC<SimulationPageProps> = ({ onAddTrace }) =>
             Every remediation proposal is evaluated against graph constraints. Actions remain pending until human authorization.
           </p>
         </div>
+        {/* Amazon Bedrock Nova Lite Incident Analysis */}
+        {agentBriefing && (
+          <div className="rounded-lg border border-zinc-700 bg-zinc-950 p-4 space-y-2 shadow-sm">
+            <div className="flex items-center gap-2 text-white font-bold text-xs uppercase tracking-wide">
+              <Sparkles className="h-4 w-4 text-white" />
+              <span>Amazon Bedrock Nova Lite Incident Analysis</span>
+            </div>
+            <p className="text-sm text-zinc-200 leading-relaxed font-sans">
+              {agentBriefing}
+            </p>
+          </div>
+        )}
 
         {/* Pending Approval Gate Card */}
         {activeApproval && (

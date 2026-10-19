@@ -728,8 +728,17 @@ async def ask_question(
             _raise_tool_failure(result)
         citations = _citations(result)
         canonical_id = result.data["service_id"]
+        answer = None
+        try:
+            answer = await synthesize_from_citations(
+                question=req.question,
+                service_id=canonical_id,
+                citations=citations,
+            )
+        except Exception:
+            answer = _ownership_answer(canonical_id, result.data)
         return {
-            "answer": _ownership_answer(canonical_id, result.data),
+            "answer": answer,
             "tool_result": result.model_dump(mode="json"),
             "citations": citations,
         }
@@ -869,6 +878,29 @@ async def create_incident(
         ),
     )
 
+    agent_briefing = ""
+    try:
+        from agents.answering import _model
+        blast = state.evidence.get("blast_radius", {})
+        affected = blast.get("affected_services", [])
+        proposed = state.proposed_action or {}
+        route = proposed.get("route", [])
+        cost = proposed.get("cost", 8)
+        prompt = (
+            f"You are the ChronosOps Autonomous SRE Agent on FalkorDB. Write a 2-sentence executive incident briefing:\n"
+            f"Service {req.service_id} suffered an outage.\n"
+            f"Downstream blast radius calculated from FalkorDB [:DEPENDS_ON]: {', '.join(affected)} ({len(affected)} services).\n"
+            f"FalkorDB algo.SPpaths evaluated candidate routes under cost cap {req.max_cost} and selected optimal route: {' -> '.join(route)} (Cost: {cost}).\n"
+            f"Explain the business impact and why the chosen route is safe."
+        )
+        resp = await asyncio.to_thread(_model().invoke, prompt)
+        agent_briefing = resp.content.strip() if isinstance(resp.content, str) else ""
+    except Exception:
+        agent_briefing = (
+            f"Outage detected on {req.service_id}. "
+            f"FalkorDB graph traversal identified {len(state.evidence.get('blast_radius', {}).get('affected_services', []))} affected services. "
+            f"Remediation selected optimal route under safety cap {req.max_cost}."
+        )
     persisted = await get_incident(incident_id, tenant_id=tenant_id)
     return {
         "incident_id": incident_id,
@@ -878,6 +910,7 @@ async def create_incident(
         "proposed_action": state.proposed_action,
         "blast_radius": state.evidence.get("blast_radius"),
         "expires_at": persisted.get("expires_at"),
+        "agent_briefing": agent_briefing,
         "tool_results": [
             state.evidence[key]
             for key in ("blast_radius_tool", "routes")
