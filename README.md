@@ -35,31 +35,30 @@ Playable recordings of the running platform are available in the repository:
 ChronosOps anchors all AI reasoning directly in FalkorDB. The agents execute parameterized OpenCypher queries against graph nodes and relationships to calculate blast radius, find failover routes, enforce memory exclusions, and look up ownership.
 
 ```mermaid
-flowchart TD
-    subgraph Agents ["AI Agents"]
+flowchart TB
+    subgraph topology ["ops_topology · dependencies and routing"]
         direction LR
-        Triage["Triage Agent"]
-        Remediation["Remediation Agent"]
-        Memory["Memory Agent"]
-        Brain["Company Brain Agent"]
+        Dependent["Dependent service"] -->|DEPENDS_ON| Primary["Primary service"]
+        Primary -->|ROUTES_TO| Backup["Backup service"]
     end
 
-    subgraph FalkorDB ["FalkorDB Graph (Nodes and Relationships)"]
-        direction TB
-        Service["(:Service)"] -->|DEPENDS_ON| DepService["(:Service)"]
-        Service -->|ROUTES_TO| BackupService["(:Service)"]
-        Service -->|OWNED_BY| Team["(:Team)"]
-        Team -->|MEMBER_OF| Person["(:Person)"]
-        Episode["(:IncidentEpisode)"] -->|RECORDED_DECISION| Decision["(:DecisionLog)"]
-        Decision -->|BLOCKED_BY| Fact["(:SemanticFact)"]
-        Workflow["(:WorkflowSubgraph)"] -->|NEXT_STEP| Step["(:WorkflowStep)"]
+    subgraph company ["company_brain · canonical ownership"]
+        direction LR
+        CompanyService["Service"] -->|"RELATES: OWNED_BY"| Team["Team"]
+        Person["Person"] -->|"RELATES: MEMBER_OF"| Team
     end
 
-    Triage -->|"1. Reverse DEPENDS_ON"| Service
-    Remediation -->|"2. algo.SPpaths on ROUTES_TO"| BackupService
-    Memory -->|"3. BLOCKED_BY fact exclusions"| Fact
-    Memory -->|"4. NEXT_STEP procedural steps"| Workflow
-    Brain -->|"5. OWNED_BY canonical lookup"| Team
+    subgraph memory ["agent_memory_acme / globex · tenant-private memory"]
+        direction LR
+        Episode["IncidentEpisode"] -->|RECORDED_DECISION| Decision["DecisionLog"]
+        Decision -->|BLOCKED_BY| Fact["SemanticFact"]
+        Workflow["WorkflowSubgraph"] -->|CONTAINS_STEP| FirstStep["WorkflowStep"]
+        FirstStep -->|NEXT_STEP| NextStep["WorkflowStep"]
+    end
+
+    Primary ~~~ CompanyService
+    Team ~~~ Episode
+```
 
 ### Graph Nodes and Relationships
 
